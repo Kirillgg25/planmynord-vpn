@@ -1,0 +1,28 @@
+{
+  "name": "planmynord-vpn",
+  "version": "0.2.0",
+  "private": true,
+  "description": "PlanMyNord VPN desktop client prototype",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "check": "node --check main.js && node --check preload.js && node --check src/app.js",
+    "build:portable": "electron-builder --win portable --x64"
+  },
+  "devDependencies": {
+    "electron": "^44.5.1",
+    "electron-builder": "^26.0.12"
+  },
+  "build": {
+    "appId": "com.planmynord.vpn",
+    "productName": "PlanMyNord VPN",
+    "asar": true,
+    "files": ["main.js", "preload.js", "src/**/*", "package.json"],
+    "extraResources": [{ "from": "vendor/xray", "to": "xray" }],
+    "win": {
+      "target": ["portable"],
+      "requestedExecutionLevel": "requireAdministrator",
+      "artifactName": "PlanMyNord-VPN-Windows-${version}.${ext}"
+    }
+  }
+}

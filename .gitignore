@@ -1,0 +1,23 @@
+# Local secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+# Syncthing
+.stfolder/
+.stignore
+*.sync-conflict-*
+# Android build output
+Android/.gradle/
+Android/**/build/
+Android/local.properties
+*.apk
+# Windows build output
+Windows/node_modules/
+Windows/dist/
+Windows/.electron-builder-cache/
+Windows/.npm-cache/
+# Bundled third-party PC client archives
+PC-Client/v2rayN-windows-64.zip
+PC-Client/app/v2rayN-windows-64/

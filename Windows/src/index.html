@@ -1,0 +1,174 @@
+<!doctype html>
+<html lang="no">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src https://planmynord.com; object-src 'none'; base-uri 'none'; form-action 'none'" />
+    <title>PlanMyNord VPN</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar">
+        <div class="brand">
+          <div class="brand-mark" aria-hidden="true">
+            <svg viewBox="0 0 48 48" role="img">
+              <path d="M24 4 39 12.5v16.8L24 44 9 29.3V12.5L24 4Z" fill="currentColor" opacity=".18"/>
+              <path d="m16 25 5 5 11-13" fill="none" stroke="currentColor" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </div>
+          <div>
+            <strong>PlanMyNord</strong>
+            <span>VPN</span>
+          </div>
+        </div>
+
+        <nav aria-label="Hovedmeny">
+          <button class="nav-item active" data-view="home" data-i18n="nav.overview">Oversikt</button>
+          <button class="nav-item" data-view="profiles" data-i18n="nav.profiles">Profiler</button>
+          <button class="nav-item" data-view="settings" data-i18n="nav.settings">Innstillinger</button>
+        </nav>
+
+        <div class="sidebar-footer">
+          <span class="status-dot"></span>
+          <span data-i18n="core.missing">Kjerne ikke installert</span>
+        </div>
+      </aside>
+
+      <main>
+        <header class="topbar">
+          <div>
+            <p class="eyebrow" data-i18n="header.eyebrow">Sikker tilgang</p>
+            <h1>PlanMyNord VPN</h1>
+          </div>
+          <div class="top-actions">
+            <div class="language-switch" role="group" aria-label="Language">
+              <button class="language-button active" data-language="no">NO</button>
+              <button class="language-button" data-language="ru">RU</button>
+              <button class="language-button" data-language="en">EN</button>
+            </div>
+            <button id="openWebsite" class="button ghost">planmynord.com</button>
+            <button id="accountButton" class="button ghost">Аккаунт</button>
+          </div>
+        </header>
+
+        <section id="homeView" class="view active">
+          <div class="dashboard-grid">
+            <article class="connect-card">
+              <div class="connection-state">
+                <span id="stateBadge" class="badge offline">Ikke tilkoblet</span>
+                <span id="profileName" data-i18n="connection.autoNorway">Norge · Automatisk</span>
+              </div>
+
+              <button id="connectButton" class="power-button" aria-label="Koble til">
+                <svg viewBox="0 0 64 64" aria-hidden="true">
+                  <path d="M32 8v23M18 16.5a23 23 0 1 0 28 0" fill="none" stroke="currentColor" stroke-width="6" stroke-linecap="round"/>
+                </svg>
+              </button>
+
+              <h2 id="connectionTitle">Klar når du er</h2>
+              <p id="connectionCopy">Velg en profil og koble sikkert til din private VPN.</p>
+
+              <div class="server-select">
+                <div>
+                  <span data-i18n="profile.selectedLabel">Valgt profil</span>
+                  <strong id="selectedProfile" data-i18n="profile.demoNorway">Demo · Norge</strong>
+                </div>
+                <button id="changeProfile" class="button compact" data-i18n="common.change">Endre</button>
+              </div>
+            </article>
+
+            <div class="side-stack">
+              <article class="info-card">
+                <div class="card-heading">
+                  <h3 data-i18n="connection.heading">Tilkobling</h3>
+                  <span class="mini-label">TUN</span>
+                </div>
+                <dl class="metrics">
+                  <div><dt data-i18n="connection.protocol">Protokoll</dt><dd>Xray · TUN</dd></div>
+                  <div><dt data-i18n="connection.ip">IP-adresse</dt><dd>—</dd></div>
+                  <div><dt data-i18n="connection.duration">Varighet</dt><dd id="duration">00:00:00</dd></div>
+                </dl>
+              </article>
+
+              <article class="info-card traffic-card">
+                <div class="card-heading">
+                  <h3 data-i18n="traffic.heading">Trafikk</h3>
+                  <span data-i18n="traffic.lastSession">Siste økt</span>
+                </div>
+                <div class="traffic-grid">
+                  <div><span data-i18n="traffic.download">Nedlasting</span><strong>0 MB</strong></div>
+                  <div><span data-i18n="traffic.upload">Opplasting</span><strong>0 MB</strong></div>
+                </div>
+              </article>
+
+              <article class="notice-card"><strong>PlanMyNord VPN</strong><p>Windows kan be om administratorrettigheter for å opprette VPN-adapteren.</p></article>
+            </div>
+          </div>
+        </section>
+
+        <section id="profilesView" class="view">
+          <div class="section-heading">
+            <div><p class="eyebrow" data-i18n="profiles.eyebrow">Konfigurasjon</p><h2 data-i18n="profiles.heading">VPN-profiler</h2></div>
+            <button id="importProfile" class="button primary" data-i18n="profiles.import">Importer profil</button>
+          </div>
+          <div id="profileList" class="profile-list">
+            <article class="profile-row selected">
+              <div class="flag">NO</div>
+              <div><strong>PlanMyNord VPN</strong><span>Профиль подключается после оплаты и настройки сервера.</span></div>
+              <span class="profile-status">Аккаунт</span>
+            </article>
+          </div>
+          <article class="subscription-card">
+            <strong>Подключение</strong>
+            <p>Серверный профиль появится автоматически после подключения VPN-сервера.</p>
+            <span id="subscriptionStatus" class="subscription-status" aria-live="polite"></span>
+          </article>
+        </section>
+
+        <section id="settingsView" class="view">
+          <div class="section-heading"><div><p class="eyebrow" data-i18n="settings.eyebrow">Program</p><h2 data-i18n="nav.settings">Innstillinger</h2></div></div>
+          <div class="settings-list">
+            <label class="setting-row"><div><strong data-i18n="settings.startWindows">Start med Windows</strong><span data-i18n="settings.startWindowsCopy">Lanser klienten etter innlogging</span></div><input type="checkbox" disabled /></label>
+            <label class="setting-row"><div><strong data-i18n="settings.autoConnect">Automatisk tilkobling</strong><span data-i18n="settings.autoConnectCopy">Koble til sist brukte profil</span></div><input type="checkbox" disabled /></label>
+            <label class="setting-row"><div><strong>Kill switch</strong><span data-i18n="settings.killSwitchCopy">Blokker trafikk hvis VPN-forbindelsen faller ut</span></div><input type="checkbox" disabled /></label>
+            <button id="privacyLink" class="text-link" data-i18n="settings.privacy">Personvern på planmynord.com</button>
+          </div>
+        </section>
+
+        <section id="accountView" class="view">
+          <div class="section-heading"><div><p class="eyebrow">PlanMyNord</p><h2>Общий аккаунт сайта и VPN</h2></div></div>
+          <article class="subscription-card" id="accountPanel">
+            <p id="accountHint">Войдите в аккаунт planmynord.com, чтобы использовать общую VPN-подписку.</p>
+            <div id="signedInAccount" hidden>
+              <strong id="accountName"></strong><span id="accountEmail"></span>
+              <p id="accountPlan"></p>
+              <button id="refreshAccount" class="button primary">Обновить аккаунт</button>
+              <button id="logoutAccount" class="button ghost">Выйти</button>
+            </div>
+            <div id="signedOutAccount">
+              <label for="accountEmailInput">Электронная почта</label>
+              <input id="accountEmailInput" type="email" autocomplete="username" />
+              <label for="accountPasswordInput">Пароль</label>
+              <input id="accountPasswordInput" type="password" autocomplete="current-password" />
+              <button id="loginAccount" class="button primary">Войти</button>
+              <button id="registerAccount" class="button ghost">Регистрация на сайте</button>
+            </div>
+            <div id="vpnPaymentActions" hidden>
+              <p id="vpnPriceText">Тариф PlanMyNord VPN</p>
+              <button id="payVpnCard" class="button primary">Оплатить картой</button>
+              <button id="payVpnVipps" class="button ghost">Оплатить через Vipps</button>
+            </div>
+            <p id="accountStatus" class="subscription-status" aria-live="polite"></p>
+          </article>
+        </section>
+
+        <footer>
+          <span data-i18n="footer.version">PlanMyNord VPN · prototype 0.1.0</span>
+          <span id="footerMessage">Ingen aktiv forbindelse</span>
+        </footer>
+      </main>
+    </div>
+    <script src="app.js"></script>
+  </body>
+</html>
