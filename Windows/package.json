@@ -17,10 +17,22 @@
     "appId": "com.planmynord.vpn",
     "productName": "PlanMyNord VPN",
     "asar": true,
-    "files": ["main.js", "preload.js", "src/**/*", "package.json"],
-    "extraResources": [{ "from": "vendor/xray", "to": "xray" }],
+    "files": [
+      "main.js",
+      "preload.js",
+      "src/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "vendor/sing-box",
+        "to": "sing-box"
+      }
+    ],
     "win": {
-      "target": ["portable"],
+      "target": [
+        "portable"
+      ],
       "requestedExecutionLevel": "requireAdministrator",
       "artifactName": "PlanMyNord-VPN-Windows-${version}.${ext}"
     }

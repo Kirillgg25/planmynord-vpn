@@ -2,6 +2,10 @@ const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('planMyNord', {
   importProfile: () => ipcRenderer.invoke('profile:import'),
+  listProfiles: () => ipcRenderer.invoke('profiles:list'),
+  addProfileLink: (value) => ipcRenderer.invoke('profiles:add-link', value),
+  selectProfile: (id) => ipcRenderer.invoke('profiles:select', id),
+  removeProfile: (id) => ipcRenderer.invoke('profiles:remove', id),
   getAccount: () => ipcRenderer.invoke('account:get'),
   loginAccount: (credentials) => ipcRenderer.invoke('account:login', credentials),
   logoutAccount: () => ipcRenderer.invoke('account:logout'),

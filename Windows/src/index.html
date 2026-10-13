@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src https://planmynord.com; object-src 'none'; base-uri 'none'; form-action 'none'" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src https:; object-src 'none'; base-uri 'none'; form-action 'none'" />
     <title>PlanMyNord VPN</title>
     <link rel="stylesheet" href="styles.css" />
   </head>
@@ -57,7 +57,7 @@
             <article class="connect-card">
               <div class="connection-state">
                 <span id="stateBadge" class="badge offline">Ikke tilkoblet</span>
-                <span id="profileName" data-i18n="connection.autoNorway">Norge · Automatisk</span>
+                <span id="profileName" data-i18n="profiles.noneSelected">Профиль не выбран</span>
               </div>
 
               <button id="connectButton" class="power-button" aria-label="Koble til">
@@ -72,7 +72,7 @@
               <div class="server-select">
                 <div>
                   <span data-i18n="profile.selectedLabel">Valgt profil</span>
-                  <strong id="selectedProfile" data-i18n="profile.demoNorway">Demo · Norge</strong>
+                  <strong id="selectedProfile" data-i18n="profiles.noneSelected">Профиль не выбран</strong>
                 </div>
                 <button id="changeProfile" class="button compact" data-i18n="common.change">Endre</button>
               </div>
@@ -110,18 +110,21 @@
         <section id="profilesView" class="view">
           <div class="section-heading">
             <div><p class="eyebrow" data-i18n="profiles.eyebrow">Konfigurasjon</p><h2 data-i18n="profiles.heading">VPN-profiler</h2></div>
-            <button id="importProfile" class="button primary" data-i18n="profiles.import">Importer profil</button>
-          </div>
-          <div id="profileList" class="profile-list">
-            <article class="profile-row selected">
-              <div class="flag">NO</div>
-              <div><strong>PlanMyNord VPN</strong><span>Профиль подключается после оплаты и настройки сервера.</span></div>
-              <span class="profile-status">Аккаунт</span>
-            </article>
+            <button id="importProfile" class="button ghost" data-i18n="profiles.importFile">Импорт файла</button>
           </div>
           <article class="subscription-card">
-            <strong>Подключение</strong>
-            <p>Серверный профиль появится автоматически после подключения VPN-сервера.</p>
+            <label for="profileLink" data-i18n="profiles.addLink">Добавить VPN по ссылке</label>
+            <p data-i18n="profiles.linkHint">Подписка или одна ссылка VLESS, VMess, Trojan, Shadowsocks, Hysteria2 или TUIC от любого провайдера.</p>
+            <form id="profileLinkForm" class="subscription-form">
+              <input id="profileLink" type="text" placeholder="https://provider.example/sub/... или vless://…" autocomplete="off" />
+              <button class="button primary" type="submit" data-i18n="profiles.add">Добавить</button>
+            </form>
+            <span id="profileLinkStatus" class="subscription-status" aria-live="polite"></span>
+          </article>
+          <div id="profileList" class="profile-list"></div>
+          <article class="subscription-card">
+            <strong data-i18n="profiles.connectionTitle">Системное VPN-подключение</strong>
+            <p data-i18n="profiles.connectionHint">Подключение доступно для совместимых профилей. Windows может запросить права администратора для TUN-адаптера.</p>
             <span id="subscriptionStatus" class="subscription-status" aria-live="polite"></span>
           </article>
         </section>

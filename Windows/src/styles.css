@@ -95,6 +95,10 @@ h3 { margin-bottom: 0; }
 .profile-row strong, .profile-row span { display: block; }
 .profile-row span { margin-top: 4px; color: var(--muted); font-size: 13px; }
 .profile-status { color: var(--cyan) !important; }
+.profile-actions { display: flex; gap: 8px; }
+.profile-actions .button { white-space: nowrap; }
+.profile-actions .button.ghost { color: var(--danger); }
+.button:disabled { opacity: .5; cursor: not-allowed; }
 .subscription-card { margin-top: 16px; padding: 20px; border: 1px solid var(--line); border-radius: 18px; background: rgba(13,25,41,.92); }
 .subscription-card label { display: block; font-weight: 700; }
 .subscription-card p { margin: 6px 0 14px; color: var(--muted); font-size: 13px; }

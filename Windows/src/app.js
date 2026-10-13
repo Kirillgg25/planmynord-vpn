@@ -14,7 +14,10 @@ const translations = {
     'demo.heading': 'Prototypemodus', 'demo.copy': 'Knappen demonstrerer brukerflyten, men oppretter ikke en ekte VPN-forbindelse ennå.',
     'profiles.eyebrow': 'Konfigurasjon', 'profiles.heading': 'VPN-profiler', 'profiles.import': 'Importer profil',
     'profiles.demoDescription': 'Eksempelprofil · ingen hemmeligheter lagret', 'profiles.chosen': 'Valgt',
-    'profiles.imported': 'Importert lokalt · ikke aktivert', 'profiles.ready': 'Klar',
+    'profiles.imported': 'Importert lokalt', 'profiles.ready': 'Klar', 'profiles.importFile': 'Importer fil',
+    'profiles.addLink': 'Legg til VPN via lenke', 'profiles.linkHint': 'Abonnement eller en VLESS-, VMess-, Trojan-, Shadowsocks-, Hysteria2- eller TUIC-lenke fra en valgfri leverandør.',
+    'profiles.add': 'Legg til', 'profiles.noneSelected': 'Ingen profil valgt', 'profiles.connectionTitle': 'System-VPN-tilkobling',
+    'profiles.connectionHint': 'TUN krever en kompatibel profil. Windows kan be om administratorrettigheter for VPN-adapteren.',
     'profiles.subscription': '3x-ui-abonnement', 'profiles.subscriptionHint': 'Lagres bare på denne PC-en og bygges aldri inn i appen.', 'profiles.saveSubscription': 'Lagre', 'profiles.subscriptionSaved': 'Abonnement lagret lokalt.', 'profiles.subscriptionInvalid': 'Skriv inn en gyldig HTTPS-abonnementslenke.',
     'settings.eyebrow': 'Program', 'settings.startWindows': 'Start med Windows',
     'settings.startWindowsCopy': 'Lanser klienten etter innlogging', 'settings.autoConnect': 'Automatisk tilkobling',
@@ -37,7 +40,10 @@ const translations = {
     'demo.heading': 'Режим прототипа', 'demo.copy': 'Кнопка демонстрирует интерфейс, но пока не создаёт настоящее VPN-подключение.',
     'profiles.eyebrow': 'Конфигурация', 'profiles.heading': 'VPN-профили', 'profiles.import': 'Импортировать профиль',
     'profiles.demoDescription': 'Пример профиля · секреты не сохранены', 'profiles.chosen': 'Выбран',
-    'profiles.imported': 'Импортирован локально · не активирован', 'profiles.ready': 'Готов',
+    'profiles.imported': 'Добавлен локально', 'profiles.ready': 'Готов', 'profiles.importFile': 'Импорт файла',
+    'profiles.addLink': 'Добавить VPN по ссылке', 'profiles.linkHint': 'Подписка или одиночная ссылка VLESS, VMess, Trojan, Shadowsocks, Hysteria2 или TUIC от любого провайдера.',
+    'profiles.add': 'Добавить', 'profiles.noneSelected': 'Профиль не выбран', 'profiles.connectionTitle': 'Системное VPN-подключение',
+    'profiles.connectionHint': 'Для TUN нужен совместимый профиль. Windows может запросить права администратора для VPN-адаптера.',
     'profiles.subscription': 'Подписка 3x-ui', 'profiles.subscriptionHint': 'Хранится только на этом ПК и не встраивается в программу.', 'profiles.saveSubscription': 'Сохранить', 'profiles.subscriptionSaved': 'Подписка сохранена локально.', 'profiles.subscriptionInvalid': 'Введите корректную HTTPS-ссылку подписки.',
     'settings.eyebrow': 'Приложение', 'settings.startWindows': 'Запускать с Windows',
     'settings.startWindowsCopy': 'Запускать клиент после входа в систему', 'settings.autoConnect': 'Автоподключение',
@@ -60,7 +66,10 @@ const translations = {
     'demo.heading': 'Prototype mode', 'demo.copy': 'The button demonstrates the user flow but does not create a real VPN connection yet.',
     'profiles.eyebrow': 'Configuration', 'profiles.heading': 'VPN profiles', 'profiles.import': 'Import profile',
     'profiles.demoDescription': 'Example profile · no secrets stored', 'profiles.chosen': 'Selected',
-    'profiles.imported': 'Imported locally · not activated', 'profiles.ready': 'Ready',
+    'profiles.imported': 'Added locally', 'profiles.ready': 'Ready', 'profiles.importFile': 'Import file',
+    'profiles.addLink': 'Add VPN from link', 'profiles.linkHint': 'A subscription or a single VLESS, VMess, Trojan, Shadowsocks, Hysteria2, or TUIC link from any provider.',
+    'profiles.add': 'Add', 'profiles.noneSelected': 'No profile selected', 'profiles.connectionTitle': 'System VPN connection',
+    'profiles.connectionHint': 'TUN requires a compatible profile. Windows may ask for administrator permission for the VPN adapter.',
     'profiles.subscription': '3x-ui subscription', 'profiles.subscriptionHint': 'Stored only on this PC and never embedded into the app.', 'profiles.saveSubscription': 'Save', 'profiles.subscriptionSaved': 'Subscription saved locally.', 'profiles.subscriptionInvalid': 'Enter a valid HTTPS subscription URL.',
     'settings.eyebrow': 'Application', 'settings.startWindows': 'Start with Windows',
     'settings.startWindowsCopy': 'Launch the client after sign-in', 'settings.autoConnect': 'Auto-connect',
@@ -70,7 +79,7 @@ const translations = {
   }
 };
 
-const state = { connected: false, startedAt: null, timer: null, importedProfiles: [], language: localStorage.getItem('planmynord-language') || 'no' };
+const state = { connected: false, startedAt: null, timer: null, importedProfiles: [], profiles: [], selectedProfile: null, connectionMessage: '', language: localStorage.getItem('planmynord-language') || 'no' };
 const views = { home: document.querySelector('#homeView'), profiles: document.querySelector('#profilesView'), settings: document.querySelector('#settingsView'), account: document.querySelector('#accountView') };
 const connectButton = document.querySelector('#connectButton');
 const connectHint = document.querySelector('#connectionCopy');
@@ -99,6 +108,53 @@ function setView(name) {
   document.querySelectorAll('.nav-item').forEach((item) => item.classList.toggle('active', item.dataset.view === name));
 }
 
+function renderProfiles(profiles = []) {
+  state.profiles = profiles;
+  state.selectedProfile = profiles.find((profile) => profile.selected) || profiles[0] || null;
+  profileList.replaceChildren();
+  if (!profiles.length) {
+    const empty = document.createElement('article');
+    empty.className = 'profile-row';
+    const note = document.createElement('span');
+    note.textContent = state.language === 'en' ? 'Add a subscription link or a single server link to get started.' : state.language === 'no' ? 'Legg til en abonnementlenke eller serverlenke for å starte.' : 'Добавьте ссылку подписки или ссылку сервера, чтобы начать.';
+    note.style.gridColumn = '1 / -1';
+    empty.append(note);
+    profileList.append(empty);
+  }
+  for (const profile of profiles) {
+    const row = document.createElement('article');
+    row.className = `profile-row${profile.selected ? ' selected' : ''}`;
+    const flag = document.createElement('div');
+    flag.className = 'flag';
+    flag.textContent = profile.protocol.toUpperCase().slice(0, 3);
+    const detail = document.createElement('div');
+    const title = document.createElement('strong');
+    title.textContent = profile.name;
+    const meta = document.createElement('span');
+    meta.textContent = `${profile.protocol.toUpperCase()} · ${profile.server}`;
+    detail.append(title, meta);
+    const actions = document.createElement('div');
+    actions.className = 'profile-actions';
+    const select = document.createElement('button');
+    select.className = 'button compact';
+    select.textContent = profile.selected ? (state.language === 'en' ? 'Selected' : state.language === 'no' ? 'Valgt' : 'Выбран') : (state.language === 'en' ? 'Select' : state.language === 'no' ? 'Velg' : 'Выбрать');
+    select.addEventListener('click', async () => {
+      await window.planMyNord.selectProfile(profile.id);
+      renderProfiles(await window.planMyNord.listProfiles());
+    });
+    const remove = document.createElement('button');
+    remove.className = 'button compact ghost';
+    remove.textContent = state.language === 'en' ? 'Remove' : state.language === 'no' ? 'Fjern' : 'Удалить';
+    remove.addEventListener('click', async () => renderProfiles(await window.planMyNord.removeProfile(profile.id)));
+    actions.append(select, remove);
+    row.append(flag, detail, actions);
+    profileList.append(row);
+  }
+  const label = state.selectedProfile?.name || t('profiles.noneSelected');
+  document.querySelector('#selectedProfile').textContent = label;
+  document.querySelector('#profileName').textContent = state.selectedProfile ? `${state.selectedProfile.protocol.toUpperCase()} · ${state.selectedProfile.server}` : t('profiles.noneSelected');
+}
+
 function formatDuration(startedAt) {
   const total = Math.floor((Date.now() - startedAt) / 1000);
   return [Math.floor(total / 3600), Math.floor((total % 3600) / 60), total % 60].map((value) => String(value).padStart(2, '0')).join(':');
@@ -109,7 +165,7 @@ function renderConnection(resetTimer = true) {
   stateBadge.className = `badge ${state.connected ? 'online' : 'offline'}`;
   stateBadge.textContent = t(state.connected ? 'connection.online' : 'connection.offline');
   connectionTitle.textContent = t(state.connected ? 'connection.demoActive' : 'connection.ready');
-  connectionCopy.textContent = t(state.connected ? 'connection.demoCopy' : 'connection.readyCopy');
+  connectionCopy.textContent = state.connectionMessage || t(state.connected ? 'connection.demoCopy' : 'connection.readyCopy');
   footerMessage.textContent = t(state.connected ? 'footer.online' : 'footer.offline');
 
   if (!resetTimer) return;
@@ -125,15 +181,19 @@ function renderConnection(resetTimer = true) {
 connectButton.addEventListener('click', async () => {
   if (!window.planMyNord) return;
   connectButton.disabled = true;
-  subscriptionStatus.textContent = state.connected ? 'Disconnecting…' : 'Connecting…';
+  state.connectionMessage = state.connected ? 'Отключение VPN…' : 'Подключение VPN…';
+  subscriptionStatus.textContent = state.connectionMessage;
+  renderConnection(false);
   try {
     const result = state.connected ? await window.planMyNord.disconnectVpn() : await window.planMyNord.connectVpn();
     state.connected = result.status === 'connected';
-    subscriptionStatus.textContent = result.error || '';
+    state.connectionMessage = result.error || (state.connected ? `Подключено: ${result.profile || state.selectedProfile?.name || 'VPN'}` : 'VPN отключён.');
+    subscriptionStatus.textContent = state.connectionMessage;
   } catch (error) {
+    state.connectionMessage = error.message;
     subscriptionStatus.textContent = error.message;
+    if (error.message.includes('Сначала добавьте VPN-ссылку')) setView('profiles');
   } finally {
-    if (!state.connected && connectHint) connectHint.textContent = subscriptionStatus.textContent || t('connection.readyCopy');
     connectButton.disabled = false;
     renderConnection();
   }
@@ -149,14 +209,24 @@ document.querySelector('#importProfile').addEventListener('click', async () => {
   if (!window.planMyNord) return;
   const imported = await window.planMyNord.importProfile();
   if (!imported) return;
-  state.importedProfiles.push(imported);
-  const row = document.createElement('article');
-  row.className = 'profile-row';
-  row.innerHTML = '<div class="flag">CFG</div><div><strong></strong><span class="imported-description"></span></div><span class="profile-status imported-status"></span>';
-  row.querySelector('strong').textContent = imported.name;
-  row.querySelector('.imported-description').textContent = t('profiles.imported');
-  row.querySelector('.imported-status').textContent = t('profiles.ready');
-  profileList.appendChild(row);
+  try {
+    const result = await window.planMyNord.addProfileLink(imported.content);
+    renderProfiles(result.profiles);
+    document.querySelector('#profileLinkStatus').textContent = `Добавлено профилей: ${result.added}`;
+  } catch (error) { document.querySelector('#profileLinkStatus').textContent = error.message; }
+});
+
+document.querySelector('#profileLinkForm').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const input = document.querySelector('#profileLink');
+  const status = document.querySelector('#profileLinkStatus');
+  status.textContent = 'Загружаю и проверяю профиль…';
+  try {
+    const result = await window.planMyNord.addProfileLink(input.value);
+    renderProfiles(result.profiles);
+    input.value = '';
+    status.textContent = `Добавлено профилей: ${result.added}`;
+  } catch (error) { status.textContent = error.message; }
 });
 
 document.querySelector('#openWebsite').addEventListener('click', () => window.planMyNord?.openExternal('https://planmynord.com/'));
@@ -200,7 +270,10 @@ async function initializeVpn() {
   renderConnection();
   window.planMyNord.onVpnStatus((next) => {
     state.connected = next.status === 'connected';
-    subscriptionStatus.textContent = next.error || '';
+    if (next.error) state.connectionMessage = next.error;
+    else if (next.status === 'connected') state.connectionMessage = 'VPN подключён.';
+    else if (next.status === 'disconnected') state.connectionMessage = '';
+    subscriptionStatus.textContent = state.connectionMessage;
     renderConnection();
   });
 }
@@ -210,14 +283,6 @@ async function initializeAccount() {
   const signedOut = document.querySelector('#signedOutAccount');
   try {
     const account = await window.planMyNord?.getAccount();
-    const vpnProduct = await window.planMyNord?.getVpnProduct();
-    if (vpnProduct?.product) {
-      const product = vpnProduct.product;
-      document.querySelector('#vpnPriceText').textContent = `${product.name} · ${product.priceNok} NOK · ${product.durationDays} дней · до ${product.deviceLimit} устройств`;
-      document.querySelector('#payVpnCard').disabled = !vpnProduct.providers?.stripe || !vpnProduct.configured;
-      document.querySelector('#payVpnVipps').disabled = !vpnProduct.providers?.vipps || !vpnProduct.configured;
-      if (!vpnProduct.configured) accountStatus.textContent = 'Оплата включится после подключения серверной выдачи VPN-профилей.';
-    }
     signedIn.hidden = !account;
     signedOut.hidden = Boolean(account);
     document.querySelector('#vpnPaymentActions').hidden = !account;
@@ -232,6 +297,18 @@ async function initializeAccount() {
         document.querySelector('#accountPlan').textContent = error.message;
       }
     }
+    try {
+      const vpnProduct = await window.planMyNord?.getVpnProduct();
+      if (vpnProduct?.product) {
+        const product = vpnProduct.product;
+        document.querySelector('#vpnPriceText').textContent = `${product.name} · ${product.priceNok} NOK · ${product.durationDays} дней · до ${product.deviceLimit} устройств`;
+        document.querySelector('#payVpnCard').disabled = !vpnProduct.providers?.stripe || !vpnProduct.configured;
+        document.querySelector('#payVpnVipps').disabled = !vpnProduct.providers?.vipps || !vpnProduct.configured;
+        if (!vpnProduct.configured) accountStatus.textContent = 'Оплата включится после подключения серверной выдачи VPN-профилей.';
+      }
+    } catch (error) {
+      accountStatus.textContent = `Тариф сайта временно недоступен (${error.message}). Импортированные профили можно использовать независимо от аккаунта.`;
+    }
   } catch (error) {
     signedIn.hidden = true;
     signedOut.hidden = false;
@@ -244,3 +321,4 @@ async function initializeAccount() {
 
 initializeVpn();
 initializeAccount();
+window.planMyNord?.listProfiles().then(renderProfiles).catch((error) => { document.querySelector('#profileLinkStatus').textContent = error.message; });
