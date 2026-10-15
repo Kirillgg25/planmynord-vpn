@@ -329,6 +329,19 @@ async function connectVpn() {
   const profiles = await readProfiles();
   const profile = profiles.find((item) => item.id === selectedProfileId) || profiles[0];
   if (!profile) throw new Error('Сначала добавьте VPN-ссылку в разделе «Профили».');
+  const outbound = structuredClone(profile.outbound);
+  const reality = outbound.type === 'vless' && outbound.tls?.reality?.enabled === true;
+  if (reality && (!outbound.tls.utls?.enabled || !outbound.tls.utls.fingerprint)) {
+    // Apply the same Reality fingerprint default as the Android/Xray importer,
+    // including profiles that were stored before the Windows parser fix.
+    outbound.tls.utls = { enabled: true, fingerprint: 'chrome' };
+  }
+  if (reality && !outbound.tls.reality.public_key) {
+    throw new Error('В сохранённом профиле Reality нет public key. Удалите профиль и импортируйте подписку заново, чтобы обновить сохранённые параметры.');
+  }
+  const realitySummary = reality
+    ? `Reality-параметры: public key ${outbound.tls.reality.public_key ? 'есть' : 'нет'}, short ID ${outbound.tls.reality.short_id ? 'есть' : 'пустой'}, SNI ${outbound.tls.server_name ? 'есть' : 'нет'}, fingerprint ${outbound.tls.utls?.fingerprint || 'не задан'}.`
+    : '';
   const configPath = path.join(app.getPath('userData'), 'active-vpn.json');
   const config = {
     log: { level: 'info' },
@@ -346,7 +359,7 @@ async function connectVpn() {
       { type: 'tun', tag: 'tun-in', interface_name: 'PlanMyNord', address: ['172.19.0.1/30'], auto_route: true, strict_route: true, stack: 'mixed' },
       { type: 'mixed', tag: 'health-proxy', listen: '127.0.0.1', listen_port: 2080 }
     ],
-    outbounds: [profile.outbound, { type: 'direct', tag: 'direct' }, { type: 'block', tag: 'block' }],
+    outbounds: [outbound, { type: 'direct', tag: 'direct' }, { type: 'block', tag: 'block' }],
     route: { auto_detect_interface: true, default_domain_resolver: 'bootstrap', final: 'proxy', rules: [{ action: 'sniff' }, { protocol: 'dns', action: 'hijack-dns' }] }
   };
   await fs.writeFile(configPath, JSON.stringify(config), { mode: 0o600 });
@@ -375,7 +388,7 @@ async function connectVpn() {
   } catch (error) {
     const coreDetail = stderr.trim();
     await stopVpn();
-    throw new Error(`Туннель запустился, но интернет через него не прошёл проверку: ${error.message}${coreDetail ? ` · ${coreDetail}` : ''}`);
+    throw new Error(`Туннель запустился, но интернет через него не прошёл проверку: ${error.message}${realitySummary ? ` · ${realitySummary}` : ''}${coreDetail ? ` · ${coreDetail}` : ''}`);
   }
   connectedAt = Date.now();
   emitStatus('connected');
