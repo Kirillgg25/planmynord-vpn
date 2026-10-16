@@ -1,0 +1,7 @@
+Xray-core Windows amd64 binary
+Version: 26.9.9
+Upstream project: https://github.com/XTLS/Xray-core
+Source corresponding to this binary revision: https://github.com/XTLS/Xray-core/tree/52a412d
+License: Mozilla Public License 2.0 (MPL-2.0)
+License text: https://www.mozilla.org/en-US/MPL/2.0/
+The Xray-core source code and license are available from the upstream URLs above.

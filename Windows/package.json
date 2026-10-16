@@ -27,6 +27,10 @@
       {
         "from": "vendor/sing-box",
         "to": "sing-box"
+      },
+      {
+        "from": "vendor/xray",
+        "to": "xray"
       }
     ],
     "win": {

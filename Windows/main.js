@@ -2,9 +2,11 @@ const { app, BrowserWindow, ipcMain, dialog, shell, net, safeStorage } = require
 const path = require('path');
 const fs = require('fs/promises');
 const { spawn, execFile } = require('child_process');
+const tcp = require('node:net');
 const { randomUUID } = require('crypto');
 
 let mainWindow;
+let singBoxProcess;
 let xrayProcess;
 let connectedAt;
 let lastError = '';
@@ -277,21 +279,123 @@ function parseSubscription(body, fallbackName) {
 
 const singBoxDirectory = () => app.isPackaged ? path.join(process.resourcesPath, 'sing-box') : path.join(__dirname, 'vendor', 'sing-box');
 const singBoxExecutable = () => path.join(singBoxDirectory(), 'sing-box.exe');
+const xrayDirectory = () => app.isPackaged ? path.join(process.resourcesPath, 'xray') : path.join(__dirname, 'vendor', 'xray');
+const xrayExecutable = () => path.join(xrayDirectory(), 'xray.exe');
+
+async function resolveVpnServerAddress(hostname) {
+  const host = String(hostname || '').trim().replace(/\.$/, '');
+  if (!host) throw new Error('В профиле не указан адрес VPN-сервера');
+  if (tcp.isIP(host)) return host;
+  try {
+    return (await require('dns').promises.lookup(host, { family: 4 })).address;
+  } catch (systemDnsError) {
+    try {
+      const url = new URL('https://cloudflare-dns.com/dns-query');
+      url.searchParams.set('name', host);
+      url.searchParams.set('type', 'A');
+      const response = await net.fetch(url.toString(), {
+        headers: { accept: 'application/dns-json' },
+        signal: AbortSignal.timeout(8000)
+      });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok || result.Status !== 0) throw new Error(`DNS-over-HTTPS вернул HTTP ${response.status}, DNS status ${result.Status ?? 'unknown'}`);
+      const answer = (result.Answer || []).find((item) => item.type === 1 && tcp.isIP(item.data) === 4);
+      if (!answer) throw new Error('DNS-over-HTTPS не вернул IPv4-адрес сервера');
+      return answer.data;
+    } catch (dohError) {
+      throw new Error(`Не удалось определить адрес VPN-сервера через системный DNS или резервный DoH: ${dohError.message || systemDnsError.message}`);
+    }
+  }
+}
+
+function xrayConfigFromOutbound(outbound, serverAddress) {
+  const user = outbound.type === 'vless'
+    ? { id: outbound.uuid, encryption: 'none', ...(outbound.flow ? { flow: outbound.flow } : {}) }
+    : { id: outbound.uuid, alterId: Number(outbound.alter_id || 0), security: outbound.security || 'auto' };
+  const protocol = outbound.type === 'vmess' ? 'vmess' : 'vless';
+  const streamSettings = { network: outbound.transport?.type || 'tcp', security: outbound.tls?.reality?.enabled ? 'reality' : outbound.tls?.enabled ? 'tls' : 'none' };
+  if (outbound.transport?.type === 'ws') streamSettings.wsSettings = { path: outbound.transport.path || '/', headers: outbound.transport.headers || {} };
+  if (outbound.transport?.type === 'grpc') streamSettings.grpcSettings = { serviceName: outbound.transport.service_name || '' };
+  if (outbound.transport?.type === 'httpupgrade') streamSettings.httpupgradeSettings = { path: outbound.transport.path || '/', host: outbound.transport.host || '' };
+  if (outbound.transport?.type === 'http') { streamSettings.network = 'xhttp'; streamSettings.xhttpSettings = { path: outbound.transport.path || '/', host: outbound.transport.host || '' }; }
+  if (streamSettings.security === 'reality') {
+    streamSettings.realitySettings = {
+      serverName: outbound.tls.server_name || outbound.server,
+      fingerprint: outbound.tls.utls?.fingerprint || 'chrome',
+      publicKey: outbound.tls.reality.public_key,
+      shortId: outbound.tls.reality.short_id || '',
+      spiderX: outbound.tls.reality.spider_x || ''
+    };
+  } else if (streamSettings.security === 'tls') {
+    streamSettings.tlsSettings = {
+      serverName: outbound.tls.server_name || outbound.server,
+      fingerprint: outbound.tls.utls?.fingerprint || 'chrome',
+      allowInsecure: outbound.tls.insecure === true,
+      ...(outbound.tls.alpn ? { alpn: outbound.tls.alpn } : {})
+    };
+  }
+  return {
+    log: { loglevel: 'warning' },
+    inbounds: [{ listen: '127.0.0.1', port: 2081, protocol: 'socks', settings: { auth: 'noauth', udp: true } }],
+    outbounds: [{ tag: 'proxy', protocol, settings: { vnext: [{ address: serverAddress, port: Number(outbound.server_port), users: [user] }] }, streamSettings }, { tag: 'direct', protocol: 'freedom' }]
+  };
+}
+
+function startCore(binary, args, cwd, onExit) {
+  const child = spawn(binary, args, { cwd, windowsHide: true, stdio: ['ignore', 'ignore', 'pipe'] });
+  let stderr = '';
+  child.stderr.on('data', (chunk) => { stderr = `${stderr}${chunk}`.slice(-4000); });
+  child.once('error', (error) => emitStatus('error', error.message));
+  child.once('exit', (code) => onExit(child, code, stderr));
+  return { child, get stderr() { return stderr; } };
+}
+
+function waitForLocalPort(port, timeoutMs = 8000) {
+  return new Promise((resolve, reject) => {
+    const started = Date.now();
+    const attempt = () => {
+      const socket = tcp.createConnection({ host: '127.0.0.1', port });
+      socket.once('connect', () => { socket.destroy(); resolve(); });
+      socket.once('error', () => {
+        socket.destroy();
+        if (Date.now() - started >= timeoutMs) reject(new Error(`Локальный прокси Xray не открыл порт ${port}`));
+        else setTimeout(attempt, 150);
+      });
+    };
+    attempt();
+  });
+}
 
 function emitStatus(status, error = '') {
   lastError = error;
   mainWindow?.webContents.send('vpn:status-changed', { status, connectedAt, error });
 }
 
-async function probeTunnelDns() {
+async function curlThroughTunnel(url, { insecure = false } = {}) {
   return new Promise((resolve, reject) => {
-    execFile('curl.exe', ['--silent', '--show-error', '--fail', '--max-time', '12', '--proxy', 'http://127.0.0.1:2080', 'https://api.ipify.org/'], { windowsHide: true, timeout: 14000 }, (error, stdout, stderr) => {
-      if (error) return reject(new Error(stderr.trim() || `проверка через VPN-прокси не прошла (${error.message})`));
-      const ip = stdout.trim();
-      if (!ip) return reject(new Error('через VPN-прокси не получен внешний IP'));
-      resolve(ip);
+    const args = ['--silent', '--show-error', '--fail', '--max-time', '12', '--proxy', 'http://127.0.0.1:2080'];
+    if (insecure) args.push('--insecure');
+    args.push(url);
+    execFile('curl.exe', args, { windowsHide: true, timeout: 14000 }, (error, stdout, stderr) => {
+      if (error) return reject(new Error(stderr.trim() || `запрос через VPN не прошёл (${error.message})`));
+      if (!stdout.trim()) return reject(new Error('через VPN не получен ответ'));
+      resolve(stdout.trim());
     });
   });
+}
+
+async function probeTunnelDns() {
+  try {
+    // Use an IP URL first so this request does not depend on DNS.
+    await curlThroughTunnel('https://1.1.1.1/cdn-cgi/trace', { insecure: true });
+  } catch (error) {
+    throw new Error(`Проверка маршрута без DNS не прошла: ${error.message}`);
+  }
+  try {
+    return await curlThroughTunnel('https://api.ipify.org/');
+  } catch (error) {
+    throw new Error(`Маршрут по IP работает, но проверка доменного имени не прошла: ${error.message}`);
+  }
 }
 
 async function probeTunnelTcp() {
@@ -299,16 +403,17 @@ async function probeTunnelTcp() {
 }
 
 async function stopVpn() {
-  if (xrayProcess) {
-    const child = xrayProcess;
-    xrayProcess = null;
+  const children = [singBoxProcess, xrayProcess].filter(Boolean);
+  singBoxProcess = null;
+  xrayProcess = null;
+  await Promise.all(children.map((child) => new Promise((resolve) => {
+    if (child.exitCode !== null) return resolve();
     child.kill('SIGTERM');
-    await new Promise((resolve) => {
-      const timer = setTimeout(() => { child.kill('SIGKILL'); resolve(); }, 3000);
-      child.once('exit', () => { clearTimeout(timer); resolve(); });
-    });
-  }
+    const timer = setTimeout(() => { child.kill('SIGKILL'); resolve(); }, 3000);
+    child.once('exit', () => { clearTimeout(timer); resolve(); });
+  })));
   await fs.rm(path.join(app.getPath('userData'), 'active-vpn.json'), { force: true }).catch(() => {});
+  await fs.rm(path.join(app.getPath('userData'), 'active-xray.json'), { force: true }).catch(() => {});
   connectedAt = null;
   emitStatus('disconnected');
 }
@@ -316,7 +421,7 @@ async function stopVpn() {
 let selectedProfileId = '';
 
 async function connectVpn() {
-  if (xrayProcess && xrayProcess.exitCode === null) {
+  if (singBoxProcess && singBoxProcess.exitCode === null) {
     try {
       await probeTunnelTcp();
       return { status: 'connected', connectedAt };
@@ -330,6 +435,7 @@ async function connectVpn() {
   const profile = profiles.find((item) => item.id === selectedProfileId) || profiles[0];
   if (!profile) throw new Error('Сначала добавьте VPN-ссылку в разделе «Профили».');
   const outbound = structuredClone(profile.outbound);
+  const useXrayReality = outbound.type === 'vless' && outbound.tls?.reality?.enabled === true;
   const reality = outbound.type === 'vless' && outbound.tls?.reality?.enabled === true;
   if (reality && (!outbound.tls.utls?.enabled || !outbound.tls.utls.fingerprint)) {
     // Apply the same Reality fingerprint default as the Android/Xray importer,
@@ -343,6 +449,31 @@ async function connectVpn() {
     ? `Reality-параметры: public key ${outbound.tls.reality.public_key ? 'есть' : 'нет'}, short ID ${outbound.tls.reality.short_id ? 'есть' : 'пустой'}, SNI ${outbound.tls.server_name ? 'есть' : 'нет'}, fingerprint ${outbound.tls.utls?.fingerprint || 'не задан'}.`
     : '';
   const configPath = path.join(app.getPath('userData'), 'active-vpn.json');
+  let xrayStderr = '';
+  let xrayServerAddress = '';
+  if (useXrayReality) {
+    const xrayBin = xrayExecutable();
+    await fs.access(xrayBin);
+    xrayServerAddress = await resolveVpnServerAddress(outbound.server);
+    const xrayPath = path.join(app.getPath('userData'), 'active-xray.json');
+    const xrayConfig = xrayConfigFromOutbound(outbound, xrayServerAddress);
+    await fs.writeFile(xrayPath, JSON.stringify(xrayConfig), { mode: 0o600 });
+    const startedXray = startCore(xrayBin, ['run', '-c', xrayPath], xrayDirectory(), (child, code, stderr) => {
+      if (xrayProcess !== child) return;
+      xrayProcess = null;
+      xrayStderr = stderr;
+      if (singBoxProcess) { singBoxProcess.kill('SIGTERM'); singBoxProcess = null; }
+      connectedAt = null;
+      emitStatus('error', stderr.trim() || `Xray завершился с кодом ${code}`);
+    });
+    xrayProcess = startedXray.child;
+    xrayProcess.__stderr = () => startedXray.stderr;
+    await waitForLocalPort(2081);
+    if (xrayProcess?.exitCode !== null) throw new Error(startedXray.stderr.trim() || 'Xray не запустился');
+  }
+  const tunnelOutbound = useXrayReality
+    ? { type: 'socks', tag: 'proxy', server: '127.0.0.1', server_port: 2081 }
+    : outbound;
   const config = {
     log: { level: 'info' },
     dns: {
@@ -359,20 +490,29 @@ async function connectVpn() {
       { type: 'tun', tag: 'tun-in', interface_name: 'PlanMyNord', address: ['172.19.0.1/30'], auto_route: true, strict_route: true, stack: 'mixed' },
       { type: 'mixed', tag: 'health-proxy', listen: '127.0.0.1', listen_port: 2080 }
     ],
-    outbounds: [outbound, { type: 'direct', tag: 'direct' }, { type: 'block', tag: 'block' }],
-    route: { auto_detect_interface: true, default_domain_resolver: 'bootstrap', final: 'proxy', rules: [{ action: 'sniff' }, { protocol: 'dns', action: 'hijack-dns' }] }
+    outbounds: [tunnelOutbound, { type: 'direct', tag: 'direct' }, { type: 'block', tag: 'block' }],
+    route: {
+      auto_detect_interface: true,
+      default_domain_resolver: 'bootstrap',
+      final: 'proxy',
+      rules: [
+        ...(xrayServerAddress ? [{ ip_cidr: [`${xrayServerAddress}/32`], action: 'route', outbound: 'direct' }] : []),
+        { action: 'sniff' },
+        { protocol: 'dns', action: 'hijack-dns' }
+      ]
+    }
   };
   await fs.writeFile(configPath, JSON.stringify(config), { mode: 0o600 });
   const binary = singBoxExecutable();
   await fs.access(binary);
   const child = spawn(binary, ['--disable-color', 'run', '--config', configPath], { cwd: singBoxDirectory(), windowsHide: true, stdio: ['ignore', 'ignore', 'pipe'] });
-  xrayProcess = child;
+  singBoxProcess = child;
   let stderr = '';
   child.stderr.on('data', (chunk) => { stderr = `${stderr}${chunk}`.slice(-4000); });
   child.once('error', (error) => emitStatus('error', error.message));
   child.once('exit', (code) => {
-    if (xrayProcess !== child) return;
-    xrayProcess = null;
+    if (singBoxProcess !== child) return;
+    singBoxProcess = null;
     connectedAt = null;
     emitStatus('error', stderr.trim() || `sing-box завершился с кодом ${code}`);
   });
@@ -384,9 +524,9 @@ async function connectVpn() {
   if (child.exitCode !== null) throw new Error(stderr.trim() || `sing-box завершился с кодом ${child.exitCode}`);
   try {
     await probeTunnelDns();
-    if (xrayProcess !== child || child.exitCode !== null) throw new Error('sing-box завершился во время проверки соединения');
+    if (singBoxProcess !== child || child.exitCode !== null) throw new Error('sing-box завершился во время проверки соединения');
   } catch (error) {
-    const coreDetail = stderr.trim();
+    const coreDetail = [stderr.trim(), xrayProcess?.__stderr?.() || xrayStderr].filter(Boolean).join(' · ');
     await stopVpn();
     throw new Error(`Туннель запустился, но интернет через него не прошёл проверку: ${error.message}${realitySummary ? ` · ${realitySummary}` : ''}${coreDetail ? ` · ${coreDetail}` : ''}`);
   }
@@ -481,7 +621,7 @@ app.whenReady().then(() => {
     catch (error) { await stopVpn(); emitStatus('error', error.message); return { status: 'error', error: error.message }; }
   });
   ipcMain.handle('vpn:disconnect', async () => { await stopVpn(); return { status: 'disconnected' }; });
-  ipcMain.handle('vpn:status', () => ({ status: xrayProcess ? 'connected' : 'disconnected', connectedAt, error: lastError }));
+  ipcMain.handle('vpn:status', () => ({ status: singBoxProcess ? 'connected' : 'disconnected', connectedAt, error: lastError }));
   ipcMain.handle('external:open', async (_event, url) => {
     if (!new Set(['https://planmynord.com/', 'https://planmynord.com/privacy.html', 'https://planmynord.com/account', 'https://planmynord.com/profile']).has(url)) throw new Error('URL is not allowed');
     await shell.openExternal(url); return true;
@@ -490,5 +630,5 @@ app.whenReady().then(() => {
   app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
 });
 
-app.on('before-quit', () => { if (xrayProcess) xrayProcess.kill('SIGTERM'); });
+app.on('before-quit', () => { if (singBoxProcess) singBoxProcess.kill('SIGTERM'); if (xrayProcess) xrayProcess.kill('SIGTERM'); });
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });
