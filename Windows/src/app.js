@@ -255,6 +255,7 @@ document.querySelector('#refreshAccount').addEventListener('click', async () => 
     accountStatus.textContent = `${result.plan} · ${result.device?.name || 'Windows'}`;
   } catch (error) { accountStatus.textContent = error.message; }
 });
+document.querySelector('#scanUsbPhone').addEventListener('click', () => initializeUsbPhones());
 document.querySelector('#logoutAccount').addEventListener('click', async () => {
   await window.planMyNord.logoutAccount();
   document.querySelector('#accountEmailInput').value = '';
@@ -293,8 +294,10 @@ async function initializeAccount() {
       try {
         const result = await window.planMyNord.refreshVpnProfile();
         document.querySelector('#accountPlan').textContent = `${result.plan} · ${result.device?.name || 'Windows'}`;
+        renderPaymentState(result.payment);
       } catch (error) {
         document.querySelector('#accountPlan').textContent = error.message;
+        renderPaymentState(null);
       }
     }
     try {
@@ -319,6 +322,41 @@ async function initializeAccount() {
   }
 }
 
+function renderPaymentState(payment) {
+  const element = document.querySelector('#paymentState');
+  element.className = `payment-state ${payment ? (payment.paid ? 'paid' : 'unpaid') : 'unknown'}`;
+  if (!payment) element.textContent = 'Статус оплаты неизвестен';
+  else if (payment.paid) element.textContent = `Оплачено${payment.endsAt ? ` · действует до ${new Date(payment.endsAt).toLocaleDateString()}` : ''}`;
+  else element.textContent = 'Не оплачено · VPN-доступ не активен';
+}
+
+async function initializeUsbPhones() {
+  const status = document.querySelector('#usbPhoneStatus');
+  const button = document.querySelector('#scanUsbPhone');
+  button.disabled = true;
+  status.textContent = 'Ищу телефон среди USB-устройств…';
+  try {
+    const result = await window.planMyNord.detectUsbPhones();
+    if (result.error) throw new Error(result.error);
+    if (!result.supported) status.textContent = 'USB-поиск поддерживается только в Windows.';
+    else if (!result.devices.length) status.textContent = 'Телефон по USB не найден. Разблокируйте его и выберите режим «Передача файлов».';
+    else {
+      status.replaceChildren(...result.devices.map((device) => {
+        const row = document.createElement('div');
+        row.className = 'usb-device';
+        const name = document.createElement('strong');
+        name.textContent = device.name;
+        const detail = document.createElement('span');
+        detail.textContent = `${device.type} · ${device.status || 'подключён'}`;
+        row.append(name, detail);
+        return row;
+      }));
+    }
+  } catch (error) { status.textContent = error.message; }
+  finally { button.disabled = false; }
+}
+
 initializeVpn();
 initializeAccount();
+initializeUsbPhones();
 window.planMyNord?.listProfiles().then(renderProfiles).catch((error) => { document.querySelector('#profileLinkStatus').textContent = error.message; });

@@ -13,6 +13,7 @@ contextBridge.exposeInMainWorld('planMyNord', {
   registerAccount: () => ipcRenderer.invoke('account:register'),
   startVpnPayment: (provider) => ipcRenderer.invoke('account:payment', provider),
   getVpnProduct: () => ipcRenderer.invoke('account:vpn-product'),
+  detectUsbPhones: () => ipcRenderer.invoke('device:usb-phones'),
   connectVpn: () => ipcRenderer.invoke('vpn:connect'),
   disconnectVpn: () => ipcRenderer.invoke('vpn:disconnect'),
   getVpnStatus: () => ipcRenderer.invoke('vpn:status'),

@@ -27,6 +27,42 @@ const accountFile = () => path.join(app.getPath('userData'), 'account.dat');
 const profilesFile = () => path.join(app.getPath('userData'), 'profiles.dat');
 const API_BASE = 'https://planmynord.com';
 
+function execFileAsync(file, args, options = {}) {
+  return new Promise((resolve, reject) => {
+    execFile(file, args, { windowsHide: true, timeout: 10_000, maxBuffer: 1024 * 1024, ...options }, (error, stdout, stderr) => {
+      if (error) {
+        error.message = String(stderr || error.message).trim();
+        reject(error);
+      } else resolve(stdout);
+    });
+  });
+}
+
+async function detectUsbPhones() {
+  if (process.platform !== 'win32') return { supported: false, devices: [] };
+  try {
+    const output = String(await execFileAsync('pnputil.exe', ['/enum-devices', '/connected']));
+    const phonePattern = /android|iphone|apple mobile|phone|mtp|adb|pixel|samsung|xiaomi|redmi|huawei|honor|oneplus|oppo|vivo|motorola|nokia|sony|realme/i;
+    const devices = output.split(/\r?\n\s*\r?\n/).filter((block) => phonePattern.test(block)).map((block) => {
+      const lines = block.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+      const description = lines.find((line) => /device description|описание устройства/i.test(line));
+      const name = description?.split(':').slice(1).join(':').trim() || lines.find((line) => phonePattern.test(line)) || 'USB phone';
+      return {
+        name,
+        type: /iphone|apple mobile/i.test(block)
+          ? 'iPhone'
+          : /adb|winusb|class name:\s*usbdevice|имя класса:\s*usbdevice/i.test(block)
+            ? 'Android · USB-отладка'
+            : 'Android/MTP',
+        status: 'подключён'
+      };
+    });
+    return { supported: true, devices };
+  } catch (error) {
+    return { supported: true, devices: [], error: `Не удалось проверить USB: ${error.message}` };
+  }
+}
+
 async function readAccount() {
   try {
     const payload = await fs.readFile(accountFile());
@@ -98,10 +134,18 @@ async function refreshVpnProfile() {
     device = result.device;
   }
   const entitlement = accountResult.subscription;
-  const plan = entitlement.plan === 'vpn' && entitlement.status === 'active'
+  const expiresAt = entitlement.endsAt ? Date.parse(entitlement.endsAt) : null;
+  const paid = entitlement.plan === 'vpn' && entitlement.status === 'active'
+    && (!Number.isFinite(expiresAt) || expiresAt > Date.now());
+  const plan = paid
     ? `VPN · до ${entitlement.endsAt || 'не ограничено'}`
     : 'Доступ не оплачен';
-  return { subscription: entitlement, device, plan };
+  return {
+    subscription: entitlement,
+    device,
+    plan,
+    payment: { paid, status: paid ? 'paid' : 'unpaid', endsAt: entitlement.endsAt || null }
+  };
 }
 
 function decodeSubscription(value) {
@@ -616,6 +660,7 @@ app.whenReady().then(() => {
     if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
     return data;
   });
+  ipcMain.handle('device:usb-phones', detectUsbPhones);
   ipcMain.handle('vpn:connect', async () => {
     try { return await connectVpn(); }
     catch (error) { await stopVpn(); emitStatus('error', error.message); return { status: 'error', error: error.message }; }

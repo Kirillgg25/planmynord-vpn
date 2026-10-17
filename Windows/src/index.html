@@ -146,6 +146,7 @@
             <div id="signedInAccount" hidden>
               <strong id="accountName"></strong><span id="accountEmail"></span>
               <p id="accountPlan"></p>
+              <p id="paymentState" class="payment-state unknown">Статус оплаты проверяется…</p>
               <button id="refreshAccount" class="button primary">Обновить аккаунт</button>
               <button id="logoutAccount" class="button ghost">Выйти</button>
             </div>
@@ -163,6 +164,13 @@
               <button id="payVpnVipps" class="button ghost">Оплатить через Vipps</button>
             </div>
             <p id="accountStatus" class="subscription-status" aria-live="polite"></p>
+          </article>
+          <article class="subscription-card">
+            <div class="usb-heading">
+              <div><strong>Телефон по USB</strong><p>Поддерживаются передача файлов и USB-отладка. Для ADB подтвердите доверие этому компьютеру на телефоне.</p></div>
+              <button id="scanUsbPhone" class="button ghost">Проверить USB</button>
+            </div>
+            <div id="usbPhoneStatus" class="usb-device-list" aria-live="polite">Проверка подключения…</div>
           </article>
         </section>
 
