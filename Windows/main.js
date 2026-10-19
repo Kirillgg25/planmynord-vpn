@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, dialog, shell, net, safeStorage } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell, net, safeStorage, clipboard } = require('electron');
 const path = require('path');
 const fs = require('fs/promises');
 const { spawn, execFile } = require('child_process');
@@ -25,6 +25,7 @@ function createWindow() {
 
 const accountFile = () => path.join(app.getPath('userData'), 'account.dat');
 const profilesFile = () => path.join(app.getPath('userData'), 'profiles.dat');
+const trialProfileFile = () => path.join(app.getPath('userData'), 'vpn-trial-profile.json');
 const API_BASE = 'https://planmynord.com';
 
 function execFileAsync(file, args, options = {}) {
@@ -36,31 +37,6 @@ function execFileAsync(file, args, options = {}) {
       } else resolve(stdout);
     });
   });
-}
-
-async function detectUsbPhones() {
-  if (process.platform !== 'win32') return { supported: false, devices: [] };
-  try {
-    const output = String(await execFileAsync('pnputil.exe', ['/enum-devices', '/connected']));
-    const phonePattern = /android|iphone|apple mobile|phone|mtp|adb|pixel|samsung|xiaomi|redmi|huawei|honor|oneplus|oppo|vivo|motorola|nokia|sony|realme/i;
-    const devices = output.split(/\r?\n\s*\r?\n/).filter((block) => phonePattern.test(block)).map((block) => {
-      const lines = block.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
-      const description = lines.find((line) => /device description|описание устройства/i.test(line));
-      const name = description?.split(':').slice(1).join(':').trim() || lines.find((line) => phonePattern.test(line)) || 'USB phone';
-      return {
-        name,
-        type: /iphone|apple mobile/i.test(block)
-          ? 'iPhone'
-          : /adb|winusb|class name:\s*usbdevice|имя класса:\s*usbdevice/i.test(block)
-            ? 'Android · USB-отладка'
-            : 'Android/MTP',
-        status: 'подключён'
-      };
-    });
-    return { supported: true, devices };
-  } catch (error) {
-    return { supported: true, devices: [], error: `Не удалось проверить USB: ${error.message}` };
-  }
 }
 
 async function readAccount() {
@@ -144,6 +120,7 @@ async function refreshVpnProfile() {
     subscription: entitlement,
     device,
     plan,
+    trialProfile: accountResult.trialProfile || null,
     payment: { paid, status: paid ? 'paid' : 'unpaid', endsAt: entitlement.endsAt || null }
   };
 }
@@ -602,7 +579,7 @@ app.whenReady().then(() => {
     if (selectedProfileId === id) selectedProfileId = profiles[0]?.id || '';
     return profiles.map(({ id: profileId, name, protocol, server }) => ({ id: profileId, name, protocol, server, selected: profileId === selectedProfileId }));
   });
-  ipcMain.handle('profiles:add-link', async (_event, input) => {
+  async function addProfileLink(input, { selectFirst = false } = {}) {
     const value = String(input || '').trim();
     if (!value) throw new Error('Вставьте ссылку подписки или VPN-конфигурацию');
     let body = value;
@@ -623,9 +600,10 @@ app.whenReady().then(() => {
     const additions = parseSubscription(body, name);
     const profiles = await readProfiles();
     await writeProfiles([...profiles, ...additions]);
-    if (!selectedProfileId) selectedProfileId = additions[0].id;
-    return { added: additions.length, profiles: [...profiles, ...additions].map(({ id, name: profileName, protocol, server }) => ({ id, name: profileName, protocol, server, selected: id === selectedProfileId })) };
-  });
+    if (selectFirst || !selectedProfileId) selectedProfileId = additions[0].id;
+    return { added: additions.length, addedProfileIds: additions.map((profile) => profile.id), profiles: [...profiles, ...additions].map(({ id, name: profileName, protocol, server }) => ({ id, name: profileName, protocol, server, selected: id === selectedProfileId })) };
+  }
+  ipcMain.handle('profiles:add-link', (_event, input) => addProfileLink(input));
   ipcMain.handle('account:get', async () => {
     const account = await readAccount();
     if (!account) return null;
@@ -641,6 +619,61 @@ app.whenReady().then(() => {
   ipcMain.handle('account:login', (_event, credentials) => accountLogin(credentials.email, credentials.password));
   ipcMain.handle('account:logout', async () => { await fs.rm(accountFile(), { force: true }); return true; });
   ipcMain.handle('account:refresh-vpn', refreshVpnProfile);
+  ipcMain.handle('account:create-vpn-profile', async () => {
+    const account = await readAccount();
+    if (!account?.cookie) throw new Error('Войдите в аккаунт PlanMyNord.');
+    const accountState = await refreshVpnProfile();
+    const response = await net.fetch(`${API_BASE}/api/vpn/client-token`, {
+      method: 'POST', headers: { cookie: account.cookie, 'content-type': 'application/json', accept: 'application/json' },
+      body: JSON.stringify({ deviceId: accountState.device.id })
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
+    const subscriptionUrl = new URL(data.subscriptionUrl || data.url);
+    if (subscriptionUrl.protocol !== 'https:' || !(subscriptionUrl.hostname === 'vpn.planmynord.com' || subscriptionUrl.hostname.endsWith('.planmynord.com'))) {
+      throw new Error('Сервер вернул небезопасную или неизвестную ссылку VPN-подписки.');
+    }
+    let cached = null;
+    try { cached = JSON.parse(await fs.readFile(trialProfileFile(), 'utf8')); } catch {}
+    const profiles = await readProfiles();
+    let imported;
+    if (cached?.profileIds?.length && cached.profileIds.every((id) => profiles.some((profile) => profile.id === id))) {
+      imported = { added: 0, addedProfileIds: cached.profileIds, profiles: profiles.map(({ id, name, protocol, server }) => ({ id, name, protocol, server, selected: id === selectedProfileId })) };
+    } else {
+      imported = await addProfileLink(subscriptionUrl.toString(), { selectFirst: true });
+      await fs.mkdir(app.getPath('userData'), { recursive: true });
+      await fs.writeFile(trialProfileFile(), JSON.stringify({ profileIds: imported.addedProfileIds, endsAt: data.endsAt }), { mode: 0o600 });
+    }
+    return { ...imported, endsAt: data.endsAt, subscriptionUrl: subscriptionUrl.toString() };
+  });
+  ipcMain.handle('account:cancel-vpn-trial', async () => {
+    const account = await readAccount();
+    if (!account?.cookie) throw new Error('Войдите в аккаунт PlanMyNord.');
+    const accountState = await refreshVpnProfile();
+    const response = await net.fetch(`${API_BASE}/api/vpn/client-token/revoke`, {
+      method: 'POST', headers: { cookie: account.cookie, 'content-type': 'application/json', accept: 'application/json' },
+      body: JSON.stringify({ deviceId: accountState.device.id })
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
+    let cached = null;
+    try { cached = JSON.parse(await fs.readFile(trialProfileFile(), 'utf8')); } catch {}
+    let profiles = await readProfiles();
+    if (cached?.profileIds?.length) {
+      if (cached.profileIds.includes(selectedProfileId) && singBoxProcess) await stopVpn();
+      profiles = profiles.filter((profile) => !cached.profileIds.includes(profile.id));
+      await writeProfiles(profiles);
+      if (cached.profileIds.includes(selectedProfileId)) selectedProfileId = profiles[0]?.id || '';
+    }
+    await fs.rm(trialProfileFile(), { force: true });
+    return { ...data, profiles: profiles.map(({ id, name, protocol, server }) => ({ id, name, protocol, server, selected: id === selectedProfileId })) };
+  });
+  ipcMain.handle('account:copy-vpn-trial-link', async (_event, value) => {
+    const url = new URL(String(value || ''));
+    if (url.protocol !== 'https:' || !(url.hostname === 'vpn.planmynord.com' || url.hostname.endsWith('.planmynord.com'))) throw new Error('Недопустимая ссылка VPN-подписки.');
+    clipboard.writeText(url.toString());
+    return true;
+  });
   ipcMain.handle('account:register', async () => { await shell.openExternal('https://planmynord.com/account'); return true; });
   ipcMain.handle('account:payment', async (_event, provider) => {
     const account = await readAccount();
@@ -655,12 +688,13 @@ app.whenReady().then(() => {
     return true;
   });
   ipcMain.handle('account:vpn-product', async () => {
-    const response = await net.fetch(`${API_BASE}/api/vpn/product`, { headers: { accept: 'application/json' } });
+    const account = await readAccount();
+    if (!account?.cookie) throw new Error('Войдите в аккаунт PlanMyNord.');
+    const response = await net.fetch(`${API_BASE}/api/vpn/product`, { headers: { cookie: account.cookie, accept: 'application/json' } });
     const data = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
     return data;
   });
-  ipcMain.handle('device:usb-phones', detectUsbPhones);
   ipcMain.handle('vpn:connect', async () => {
     try { return await connectVpn(); }
     catch (error) { await stopVpn(); emitStatus('error', error.message); return { status: 'error', error: error.message }; }

@@ -93,17 +93,25 @@ public final class PlanMyNordVpnService extends VpnService {
             if (underlyingNetwork == null)
                 throw new IllegalStateException("No validated Wi-Fi network is available");
             Log.i(TAG, "Using validated Wi-Fi as the VPN underlying network");
-            if (!isVpnProfileServiceReady())
-                throw new IllegalStateException("Paid account is ready, but the VPN profile service is not connected yet");
-            String subscriptionUrl = getSharedPreferences("planmynord", MODE_PRIVATE)
-                    .getString("subscription_url", "");
-            if (!subscriptionUrl.startsWith("https://") || !subscriptionUrl.contains("/sub/"))
-                throw new IllegalStateException("VPN profile is not available");
+            JSONObject localProfile = ProfileStore.selected(this);
+            String profileText;
+            if (localProfile != null) {
+                String link = localProfile.optString("link", "").trim();
+                profileText = link.startsWith("https://") ? download(link) : link;
+            } else {
+                if (!isVpnProfileServiceReady())
+                    throw new IllegalStateException("Paid account is ready, but the VPN profile service is not connected yet");
+                String subscriptionUrl = getSharedPreferences("planmynord", MODE_PRIVATE)
+                        .getString("subscription_url", "");
+                if (!subscriptionUrl.startsWith("https://"))
+                    throw new IllegalStateException("VPN profile is not available");
+                profileText = download(subscriptionUrl);
+            }
 
             JSONObject convertRequest = new JSONObject()
                     .put("apiVersion", 3)
                     .put("method", "convertShareLinksToXrayJson")
-                    .put("payload", new JSONObject().put("text", download(subscriptionUrl)));
+                    .put("payload", new JSONObject().put("text", profileText));
             JSONObject converted = new JSONObject(LibXray.invoke(convertRequest.toString()));
             if (!converted.optBoolean("success"))
                 throw new IllegalStateException(converted.optString("error", "Subscription parsing failed"));

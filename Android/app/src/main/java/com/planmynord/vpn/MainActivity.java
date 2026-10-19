@@ -1,6 +1,7 @@
 package com.planmynord.vpn;
 
 import android.app.Activity;
+import android.app.AlertDialog;
 import android.content.ClipboardManager;
 import android.content.Context;
 import android.content.Intent;
@@ -28,6 +29,7 @@ import android.widget.TextView;
 import android.widget.Toast;
 
 import org.json.JSONObject;
+import org.json.JSONArray;
 
 import java.io.BufferedReader;
 import java.io.InputStream;
@@ -36,9 +38,11 @@ import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
+import java.time.Instant;
 import java.util.HashMap;
 import java.util.Locale;
 import java.util.Map;
+import java.util.UUID;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
@@ -136,6 +140,7 @@ public final class MainActivity extends Activity {
             renderSettings();
         } else {
             renderConnectionCard();
+            renderSubscriptionCard();
             renderMetrics();
         }
         renderNavigation();
@@ -143,6 +148,8 @@ public final class MainActivity extends Activity {
     }
 
     private void renderSubscriptionCard() {
+        JSONArray profiles = ProfileStore.load(this);
+        String selectedId = ProfileStore.selectedId(this);
         LinearLayout box = column();
         box.setPadding(dp(18), dp(18), dp(18), dp(18));
         box.setBackground(card(PANEL, 20, Color.rgb(30, 50, 73)));
@@ -151,7 +158,67 @@ public final class MainActivity extends Activity {
         hint.setPadding(0, dp(6), 0, dp(12));
         box.addView(hint);
 
-        box.addView(text(t("subscriptionServerRequired"), 13, MUTED, false));
+        EditText name = input(t("profileName"), InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_CAP_SENTENCES);
+        EditText link = input(t("profileLink"), InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_URI);
+        box.addView(name, new LinearLayout.LayoutParams(-1, dp(52)));
+        addInnerSpace(box, 10);
+        box.addView(link, new LinearLayout.LayoutParams(-1, dp(52)));
+        Button add = smallButton(t("addProfile"), true);
+        box.addView(add, accountButtonParams());
+        TextView status = text("", 13, MUTED, false);
+        box.addView(status);
+        add.setOnClickListener(v -> {
+            String profileName = name.getText().toString().trim();
+            String profileLink = link.getText().toString().trim();
+            if (profileName.isEmpty() || !isSupportedProfile(profileLink)) {
+                status.setText(t("invalidProfile"));
+                status.setTextColor(RED);
+                return;
+            }
+            try {
+                JSONArray current = ProfileStore.load(this);
+                JSONObject profile = new JSONObject().put("id", UUID.randomUUID().toString())
+                        .put("name", profileName).put("link", profileLink);
+                current.put(profile);
+                ProfileStore.save(this, current);
+                ProfileStore.select(this, profile.getString("id"));
+                render();
+            } catch (Exception error) {
+                status.setText(error.getMessage());
+                status.setTextColor(RED);
+            }
+        });
+
+        for (int i = 0; i < profiles.length(); i++) {
+            JSONObject profile = profiles.optJSONObject(i);
+            if (profile == null) continue;
+            LinearLayout item = column();
+            item.setPadding(dp(12), dp(10), dp(12), dp(10));
+            item.setBackground(card(PANEL_2, 12, profile.optString("id").equals(selectedId) ? CYAN : Color.rgb(38, 55, 74)));
+            item.addView(text(profile.optString("name", t("profileName")), 14, TEXT, true));
+            item.addView(text(profile.optString("link").startsWith("https://") ? t("httpsSubscription") : t("shareLink"), 12, MUTED, false));
+            LinearLayout actions = row();
+            Button select = smallButton(profile.optString("id").equals(selectedId) ? t("selected") : t("select"), true);
+            Button rename = smallButton(t("rename"), false);
+            Button remove = smallButton(t("remove"), false);
+            String id = profile.optString("id");
+            select.setOnClickListener(v -> { ProfileStore.select(this, id); render(); });
+            rename.setOnClickListener(v -> renameProfile(id, profile.optString("name")));
+            remove.setOnClickListener(v -> removeProfile(id));
+            LinearLayout.LayoutParams half = new LinearLayout.LayoutParams(0, dp(44), 1);
+            half.setMargins(0, dp(8), dp(4), 0);
+            actions.addView(select, half);
+            LinearLayout.LayoutParams middle = new LinearLayout.LayoutParams(0, dp(44), 1);
+            middle.setMargins(dp(4), dp(8), dp(4), 0);
+            actions.addView(rename, middle);
+            LinearLayout.LayoutParams halfRight = new LinearLayout.LayoutParams(0, dp(44), 1);
+            halfRight.setMargins(dp(4), dp(8), 0, 0);
+            actions.addView(remove, halfRight);
+            item.addView(actions);
+            LinearLayout.LayoutParams itemParams = new LinearLayout.LayoutParams(-1, -2);
+            itemParams.setMargins(0, dp(12), 0, 0);
+            box.addView(item, itemParams);
+        }
         content.addView(box);
         addSpace(16);
     }
@@ -209,6 +276,10 @@ public final class MainActivity extends Activity {
                 render();
                 return;
             }
+            if (ProfileStore.selected(this) != null) {
+                requestVpnPermission();
+                return;
+            }
             if (accountCookie.isEmpty()) {
                 Toast.makeText(this, t("accountHint"), Toast.LENGTH_LONG).show();
                 currentPage = "account";
@@ -236,7 +307,8 @@ public final class MainActivity extends Activity {
         profile.setBackground(card(PANEL_2, 14, Color.rgb(38, 55, 74)));
         LinearLayout details = column();
         details.addView(text(t("selectedProfile"), 12, MUTED, false));
-        details.addView(text("PlanMyNord VPN", 15, TEXT, true));
+        JSONObject selectedProfile = ProfileStore.selected(this);
+        details.addView(text(selectedProfile == null ? "PlanMyNord VPN" : selectedProfile.optString("name", "VPN"), 15, TEXT, true));
         profile.addView(details, new LinearLayout.LayoutParams(0, -2, 1));
         profile.addView(text("Xray · " + t(demoConnected ? "configured" : "notConfigured"), 12, CYAN, true));
         card.addView(profile, new LinearLayout.LayoutParams(-1, -2));
@@ -256,6 +328,73 @@ public final class MainActivity extends Activity {
         startForegroundService(connect);
         demoConnected = true;
         render();
+    }
+
+    private void requestVpnPermission() {
+        Intent permission = VpnService.prepare(this);
+        if (permission == null) startRealVpn();
+        else startActivityForResult(permission, VPN_PERMISSION_REQUEST);
+    }
+
+    private boolean isSupportedProfile(String value) {
+        return value.matches("(?i)^(https|vless|vmess|trojan|ss)://.+");
+    }
+
+    private void removeProfile(String id) {
+        try {
+            JSONArray existing = ProfileStore.load(this);
+            JSONArray updated = new JSONArray();
+            for (int i = 0; i < existing.length(); i++) {
+                JSONObject profile = existing.optJSONObject(i);
+                if (profile != null && !id.equals(profile.optString("id"))) updated.put(profile);
+            }
+            ProfileStore.save(this, updated);
+            if (id.equals(ProfileStore.selectedId(this)))
+                ProfileStore.select(this, updated.length() == 0 ? "" : updated.optJSONObject(0).optString("id"));
+            render();
+        } catch (Exception error) { Toast.makeText(this, error.getMessage(), Toast.LENGTH_LONG).show(); }
+    }
+
+    private void renameProfile(String id, String currentName) {
+        EditText nameInput = input(t("profileName"), InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_CAP_SENTENCES);
+        nameInput.setText(currentName);
+        new AlertDialog.Builder(this).setTitle(t("renameProfile")).setView(nameInput)
+                .setNegativeButton(android.R.string.cancel, null)
+                .setPositiveButton(t("save"), (dialog, which) -> {
+                    String nextName = nameInput.getText().toString().trim();
+                    if (nextName.isEmpty()) return;
+                    try {
+                        JSONArray profiles = ProfileStore.load(this);
+                        for (int i = 0; i < profiles.length(); i++) {
+                            JSONObject profile = profiles.optJSONObject(i);
+                            if (profile != null && id.equals(profile.optString("id"))) profile.put("name", nextName);
+                        }
+                        ProfileStore.save(this, profiles);
+                        render();
+                    } catch (Exception error) { Toast.makeText(this, error.getMessage(), Toast.LENGTH_LONG).show(); }
+                }).show();
+    }
+
+    private void createBaseProfile(String subscriptionUrl) {
+        try {
+            JSONArray profiles = ProfileStore.load(this);
+            for (int i = 0; i < profiles.length(); i++) {
+                JSONObject existing = profiles.optJSONObject(i);
+                if (existing != null && subscriptionUrl.equals(existing.optString("link"))) {
+                    ProfileStore.select(this, existing.optString("id"));
+                    currentPage = "overview";
+                    render();
+                    return;
+                }
+            }
+            JSONObject profile = new JSONObject().put("id", UUID.randomUUID().toString())
+                    .put("name", "PlanMyNord VPN").put("link", subscriptionUrl);
+            profiles.put(profile);
+            ProfileStore.save(this, profiles);
+            ProfileStore.select(this, profile.getString("id"));
+            currentPage = "overview";
+            render();
+        } catch (Exception error) { Toast.makeText(this, error.getMessage(), Toast.LENGTH_LONG).show(); }
     }
 
     private void renderMetrics() {
@@ -290,6 +429,10 @@ public final class MainActivity extends Activity {
             String name = preferences.getString("account_name", t("accountUser"));
             String email = preferences.getString("account_email", "");
             String plan = preferences.getString("account_plan", "free");
+            boolean serverPaid = preferences.getBoolean("account_paid", false);
+            String paymentPreview = preferences.getString("payment_preview", "server");
+            boolean paid = "paid".equals(paymentPreview) || ("server".equals(paymentPreview) && serverPaid);
+            String paymentEndsAt = preferences.getString("account_payment_ends_at", "");
             int devices = preferences.getInt("account_devices", 0);
             int limit = preferences.getInt("account_device_limit", 3);
             TextView identity = text(name, 18, TEXT, true);
@@ -298,12 +441,52 @@ public final class MainActivity extends Activity {
             box.addView(text(email, 13, MUTED, false));
             addMetric(box, t("plan"), plan.toUpperCase(Locale.ROOT));
             addMetric(box, t("devices"), devices + " / " + limit);
+            TextView payment = text(paid
+                    ? t("paymentPaid") + (paymentEndsAt.isEmpty() ? "" : " · " + paymentEndsAt.substring(0, Math.min(10, paymentEndsAt.length())))
+                    : t("paymentUnpaid"), 14, paid ? GREEN : RED, true);
+            payment.setPadding(dp(12), dp(10), dp(12), dp(10));
+            payment.setBackground(card(paid ? Color.rgb(20, 55, 48) : Color.rgb(59, 29, 39), 12,
+                    paid ? Color.rgb(35, 105, 85) : Color.rgb(112, 48, 65)));
+            LinearLayout.LayoutParams paymentParams = new LinearLayout.LayoutParams(-1, -2);
+            paymentParams.setMargins(0, dp(16), 0, 0);
+            box.addView(payment, paymentParams);
+            String accountSubscriptionUrl = preferences.getString("account_subscription_url", "");
+            if (!accountSubscriptionUrl.isEmpty()) {
+                TextView subscriptionReady = text(t("subscriptionReady"), 14, CYAN, true);
+                subscriptionReady.setPadding(0, dp(14), 0, 0);
+                box.addView(subscriptionReady);
+                Button copySubscription = smallButton(t("copySubscription"), true);
+                copySubscription.setOnClickListener(v -> {
+                    ClipboardManager clipboard = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
+                    clipboard.setPrimaryClip(android.content.ClipData.newPlainText("PlanMyNord VPN", accountSubscriptionUrl));
+                    Toast.makeText(this, t("subscriptionCopied"), Toast.LENGTH_SHORT).show();
+                });
+                Button createBase = smallButton(t("createBaseProfile"), true);
+                createBase.setOnClickListener(v -> createBaseProfile(accountSubscriptionUrl));
+                box.addView(copySubscription, accountButtonParams());
+                box.addView(createBase, accountButtonParams());
+            }
+            TextView previewHint = text(t("paymentPreviewHint"), 12, Color.rgb(245, 194, 94), false);
+            previewHint.setPadding(0, dp(10), 0, 0);
+            box.addView(previewHint);
+            LinearLayout previewActions = row();
+            Button previewPaid = smallButton(t("previewPaid"), "paid".equals(paymentPreview));
+            Button previewUnpaid = smallButton(t("previewUnpaid"), "unpaid".equals(paymentPreview));
+            previewPaid.setOnClickListener(v -> setPaymentPreview("paid"));
+            previewUnpaid.setOnClickListener(v -> setPaymentPreview("unpaid"));
+            LinearLayout.LayoutParams previewLeft = new LinearLayout.LayoutParams(0, dp(44), 1);
+            previewLeft.setMargins(0, dp(8), dp(4), 0);
+            LinearLayout.LayoutParams previewRight = new LinearLayout.LayoutParams(0, dp(44), 1);
+            previewRight.setMargins(dp(4), dp(8), 0, 0);
+            previewActions.addView(previewPaid, previewLeft);
+            previewActions.addView(previewUnpaid, previewRight);
+            box.addView(previewActions);
 
             TextView status = text("", 13, MUTED, false);
             status.setPadding(0, dp(12), 0, 0);
             box.addView(status);
-            LinearLayout actions = row();
-            actions.setPadding(0, dp(14), 0, 0);
+            LinearLayout actions = column();
+            actions.setPadding(0, dp(8), 0, 0);
             Button refresh = smallButton(t("refresh"), true);
             refresh.setOnClickListener(v -> refreshAccount(status));
             Button pay = smallButton(t("vpnPayment"), true);
@@ -311,9 +494,9 @@ public final class MainActivity extends Activity {
                     Uri.parse("https://planmynord.com/profile"))));
             Button logout = smallButton(t("logout"), false);
             logout.setOnClickListener(v -> logoutAccount());
-            actions.addView(refresh, new LinearLayout.LayoutParams(0, dp(46), 1));
-            actions.addView(pay, new LinearLayout.LayoutParams(0, dp(46), 1));
-            actions.addView(logout, new LinearLayout.LayoutParams(0, dp(46), 1));
+            actions.addView(refresh, accountButtonParams());
+            if (!paid) actions.addView(pay, accountButtonParams());
+            actions.addView(logout, accountButtonParams());
             box.addView(actions);
         } else {
             TextView hint = text(t("accountHint"), 13, MUTED, false);
@@ -449,6 +632,12 @@ public final class MainActivity extends Activity {
 
     private void addInnerSpace(LinearLayout parent, int height) {
         parent.addView(new Space(this), new LinearLayout.LayoutParams(1, dp(height)));
+    }
+
+    private LinearLayout.LayoutParams accountButtonParams() {
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(-1, dp(48));
+        params.setMargins(0, dp(8), 0, 0);
+        return params;
     }
 
     private void renderNavigation() {
@@ -607,6 +796,7 @@ public final class MainActivity extends Activity {
 
     private void refreshAccount(TextView status) {
         status.setText(t("refreshing"));
+        getSharedPreferences("planmynord", MODE_PRIVATE).edit().putString("payment_preview", "server").apply();
         String cookie = accountCookie;
         networkExecutor.execute(() -> {
             try {
@@ -627,6 +817,11 @@ public final class MainActivity extends Activity {
         });
     }
 
+    private void setPaymentPreview(String value) {
+        getSharedPreferences("planmynord", MODE_PRIVATE).edit().putString("payment_preview", value).apply();
+        render();
+    }
+
     private void loadVpnAccount(String cookie) throws Exception {
         JSONObject account = requestJson("/api/vpn/account", "GET", null, cookie).data;
         JSONObject subscription = account.getJSONObject("subscription");
@@ -645,8 +840,20 @@ public final class MainActivity extends Activity {
             device = created.getJSONObject("device");
             deviceCreated = true;
         }
+        boolean paid = "vpn".equals(subscription.optString("plan"))
+                && "active".equals(subscription.optString("status"));
+        String endsAt = subscription.optString("endsAt", "");
+        String subscriptionUrl = subscription.optString("subscriptionUrl", account.optString("subscriptionUrl", ""));
+        if (paid && !endsAt.isEmpty()) {
+            try { paid = Instant.parse(endsAt).isAfter(Instant.now()); }
+            catch (Exception ignored) { }
+        }
         getSharedPreferences("planmynord", MODE_PRIVATE).edit()
                 .putString("account_plan", subscription.optString("plan", "free"))
+                .putBoolean("account_paid", paid)
+                .putString("account_payment_status", subscription.optString("status", "unknown"))
+                .putString("account_payment_ends_at", endsAt)
+                .putString("account_subscription_url", subscriptionUrl)
                 .putInt("account_device_limit", subscription.optInt("deviceLimit", 3))
                 .putInt("account_devices", (devices == null ? 0 : devices.length()) + (deviceCreated ? 1 : 0))
                 .apply();
@@ -658,7 +865,9 @@ public final class MainActivity extends Activity {
         accountCookie = "";
         preferences.edit().remove("account_cookie").remove("account_cookie_encrypted")
                 .remove("account_name").remove("account_email")
-                .remove("account_plan").remove("account_device_limit").remove("account_devices").apply();
+                .remove("account_plan").remove("account_paid").remove("account_payment_status")
+                .remove("account_payment_ends_at").remove("account_subscription_url")
+                .remove("account_device_limit").remove("account_devices").apply();
         render();
         networkExecutor.execute(() -> {
             try { requestJson("/api/logout", "POST", new JSONObject(), cookie); }
@@ -796,6 +1005,9 @@ public final class MainActivity extends Activity {
             {"protocol","Protokoll"},{"location","Plassering"},{"norway","Norge"},{"duration","Varighet"},{"traffic","Trafikk"},
             {"prototype","Betaversjon: ekte Xray VPN er aktivert, men må testes på en telefon."},{"overview","Oversikt"},{"account","Konto"},{"settings","Innstillinger"},
             {"subscription","VPN-profil"},{"subscriptionHint","Profilen tilordnes fra PlanMyNord-kontoen."},{"subscriptionServerRequired","VPN-serveren må kobles til kontoen først."},{"vpnPaymentRequired","Kjøp VPN-tilgang på nettstedet først."},{"paste","Lim inn"},{"save","Lagre"},{"invalidSubscription","Ugyldig abonnementslenke"},{"subscriptionSaved","Abonnement lagret lokalt"},{"subscriptionRequired","Lagre en abonnementslenke først"}
+            ,{"paymentPaid","Betalt"},{"paymentUnpaid","Ikke betalt · VPN-tilgang er inaktiv"}
+            ,{"paymentPreviewHint","Midlertidig forhåndsvisning. Endrer ikke betalingen på serveren."},{"previewPaid","Betalt"},{"previewUnpaid","Ikke betalt"},{"profileName","Profilnavn"},{"profileLink","VPN-lenke eller HTTPS-abonnement"},{"addProfile","Legg til profil"},{"invalidProfile","Skriv inn et navn og en gyldig HTTPS-, VLESS-, VMess-, Trojan- eller Shadowsocks-lenke."},{"httpsSubscription","HTTPS-abonnement"},{"shareLink","Enkeltserver"},{"selected","Valgt"},{"select","Velg"},{"remove","Fjern"}
+            ,{"subscriptionReady","Personlig VPN-abonnement er klart"},{"copySubscription","Kopier abonnementslenke"},{"subscriptionCopied","Abonnementslenken er kopiert"},{"createBaseProfile","Opprett grunnprofil"},{"rename","Gi nytt navn"},{"renameProfile","Gi profilen nytt navn"}
             ,{"accountTitle","PlanMyNord-konto"},{"vpnPayment","VPN-kjøp"},{"accountHint","Logg inn med samme konto som på planmynord.com."},{"accountUser","Bruker"},{"email","E-post"},{"password","Passord"},{"login","Logg inn"},{"registerTitle","Ny konto"},{"name","Navn"},{"newPassword","Nytt passord (minst 4 tegn)"},{"register","Registrer deg"},{"registering","Oppretter konto…"},{"invalidRegistration","Fyll inn navn, gyldig e-post og minst 4 tegn i passordet."},{"registrationCreated","Kontoen er opprettet. Bekreft e-posten før du logger inn."},{"resendVerification","Send bekreftelses-e-post på nytt"},{"enterEmailForVerification","Skriv inn e-posten du registrerte deg med."},{"sendingVerification","Sender bekreftelses-e-post…"},{"verificationSent","En ny bekreftelseslenke er sendt."},{"createAccount","Opprett konto på nettstedet"},{"logout","Logg ut"},{"refresh","Oppdater"},{"refreshing","Oppdaterer…"},{"signingIn","Logger inn…"},{"fillCredentials","Fyll inn e-post og passord."},{"sessionMissing","Serveren returnerte ingen økt."},{"requestFailed","Forespørselen mislyktes"},{"plan","Abonnement"},{"devices","Enheter"}
             ,{"settingsTitle","VPN-innstillinger"},{"settingsHint","Endringene brukes ved neste tilkobling."},{"dnsServer","DNS-server"},{"allowLan","Tillat tilgang til lokalnettverket"},{"autoReconnect","Koble til igjen hvis tjenesten stopper"},{"diagnosticLogs","Detaljerte diagnoselogger"},{"applySettings","Lagre innstillinger"},{"resetSettings","Tilbakestill"},{"invalidSettings","Kontroller DNS-adressen og MTU-verdien."},{"settingsReconnect","Lagret. Koble fra og til VPN-et på nytt."},{"settingsSaved","Innstillingene er lagret."},{"settingsReset","Standardinnstillingene er gjenopprettet."}
         }));
@@ -806,6 +1018,9 @@ public final class MainActivity extends Activity {
             {"protocol","Протокол"},{"location","Расположение"},{"norway","Норвегия"},{"duration","Длительность"},{"traffic","Трафик"},
             {"prototype","Бета-версия: настоящий Xray VPN добавлен, но его нужно проверить на телефоне."},{"overview","Обзор"},{"account","Аккаунт"},{"settings","Настройки"},
             {"subscription","VPN-профиль"},{"subscriptionHint","Профиль выдаётся через аккаунт PlanMyNord."},{"subscriptionServerRequired","Сначала нужно подключить сервер VPN к аккаунту сайта."},{"vpnPaymentRequired","Сначала оплатите VPN-доступ в аккаунте на сайте."},{"paste","Вставить"},{"save","Сохранить"},{"invalidSubscription","Неверная ссылка подписки"},{"subscriptionSaved","Подписка сохранена локально"},{"subscriptionRequired","Сначала войдите в аккаунт PlanMyNord"}
+            ,{"paymentPaid","Оплачено"},{"paymentUnpaid","Не оплачено · VPN-доступ не активен"}
+            ,{"paymentPreviewHint","Временный предпросмотр. Он не изменяет оплату на сервере."},{"previewPaid","Оплачено"},{"previewUnpaid","Не оплачено"},{"profileName","Название профиля"},{"profileLink","VPN-ссылка или HTTPS-подписка"},{"addProfile","Добавить профиль"},{"invalidProfile","Введите название и корректную ссылку HTTPS, VLESS, VMess, Trojan или Shadowsocks."},{"httpsSubscription","HTTPS-подписка"},{"shareLink","Один сервер"},{"selected","Выбран"},{"select","Выбрать"},{"remove","Удалить"}
+            ,{"subscriptionReady","Личная VPN-подписка готова"},{"copySubscription","Копировать ссылку подписки"},{"subscriptionCopied","Ссылка подписки скопирована"},{"createBaseProfile","Создать базовый профиль"},{"rename","Переименовать"},{"renameProfile","Переименовать профиль"}
             ,{"accountTitle","Аккаунт PlanMyNord"},{"vpnPayment","Оплатить VPN"},{"accountHint","Войдите с тем же аккаунтом, который используете на planmynord.com."},{"accountUser","Пользователь"},{"email","Электронная почта"},{"password","Пароль"},{"login","Войти"},{"registerTitle","Новый аккаунт"},{"name","Имя"},{"newPassword","Новый пароль (минимум 4 символа)"},{"register","Зарегистрироваться"},{"registering","Создание аккаунта…"},{"invalidRegistration","Введите имя, правильную почту и пароль минимум из 4 символов."},{"registrationCreated","Аккаунт создан. Подтвердите почту перед входом."},{"resendVerification","Отправить письмо подтверждения повторно"},{"enterEmailForVerification","Введите почту, с которой регистрировались."},{"sendingVerification","Отправляем письмо подтверждения…"},{"verificationSent","Новая ссылка подтверждения отправлена."},{"createAccount","Создать аккаунт на сайте"},{"logout","Выйти"},{"refresh","Обновить"},{"refreshing","Обновление…"},{"signingIn","Выполняется вход…"},{"fillCredentials","Введите почту и пароль."},{"sessionMissing","Сервер не вернул сессию."},{"requestFailed","Ошибка запроса"},{"plan","Тариф"},{"devices","Устройства"}
             ,{"settingsTitle","Настройки VPN"},{"settingsHint","Изменения применяются при следующем подключении."},{"dnsServer","DNS-сервер"},{"allowLan","Разрешить доступ к локальной сети"},{"autoReconnect","Переподключаться после остановки сервиса"},{"diagnosticLogs","Подробные диагностические логи"},{"applySettings","Сохранить настройки"},{"resetSettings","Сбросить настройки"},{"invalidSettings","Проверьте DNS-адрес и значение MTU."},{"settingsReconnect","Сохранено. Переподключите VPN."},{"settingsSaved","Настройки сохранены."},{"settingsReset","Настройки по умолчанию восстановлены."}
         }));
@@ -816,6 +1031,9 @@ public final class MainActivity extends Activity {
             {"protocol","Protocol"},{"location","Location"},{"norway","Norway"},{"duration","Duration"},{"traffic","Traffic"},
             {"prototype","Beta: real Xray VPN is enabled but must be tested on a phone."},{"overview","Overview"},{"account","Account"},{"settings","Settings"},
             {"subscription","VPN profile"},{"subscriptionHint","Your profile is assigned through your PlanMyNord account."},{"subscriptionServerRequired","The VPN server must be connected to the account first."},{"vpnPaymentRequired","Purchase VPN access from your website account first."},{"paste","Paste"},{"save","Save"},{"invalidSubscription","Invalid subscription URL"},{"subscriptionSaved","Subscription saved locally"},{"subscriptionRequired","Sign in to your PlanMyNord account first"}
+            ,{"paymentPaid","Paid"},{"paymentUnpaid","Not paid · VPN access is inactive"}
+            ,{"paymentPreviewHint","Temporary preview. This does not change server payment."},{"previewPaid","Paid"},{"previewUnpaid","Not paid"},{"profileName","Profile name"},{"profileLink","VPN link or HTTPS subscription"},{"addProfile","Add profile"},{"invalidProfile","Enter a name and a valid HTTPS, VLESS, VMess, Trojan, or Shadowsocks link."},{"httpsSubscription","HTTPS subscription"},{"shareLink","Single server"},{"selected","Selected"},{"select","Select"},{"remove","Remove"}
+            ,{"subscriptionReady","Personal VPN subscription is ready"},{"copySubscription","Copy subscription link"},{"subscriptionCopied","Subscription link copied"},{"createBaseProfile","Create basic profile"},{"rename","Rename"},{"renameProfile","Rename profile"}
             ,{"accountTitle","PlanMyNord account"},{"vpnPayment","Pay for VPN"},{"accountHint","Sign in with the same account you use on planmynord.com."},{"accountUser","User"},{"email","Email"},{"password","Password"},{"login","Sign in"},{"registerTitle","New account"},{"name","Name"},{"newPassword","New password (at least 4 characters)"},{"register","Create account"},{"registering","Creating account…"},{"invalidRegistration","Enter a name, valid email, and a password of at least 4 characters."},{"registrationCreated","Account created. Verify your email before signing in."},{"resendVerification","Resend verification email"},{"enterEmailForVerification","Enter the email you registered with."},{"sendingVerification","Sending verification email…"},{"verificationSent","A new verification link has been sent."},{"createAccount","Create account on website"},{"logout","Sign out"},{"refresh","Refresh"},{"refreshing","Refreshing…"},{"signingIn","Signing in…"},{"fillCredentials","Enter your email and password."},{"sessionMissing","The server returned no session."},{"requestFailed","Request failed"},{"plan","Plan"},{"devices","Devices"}
             ,{"settingsTitle","VPN settings"},{"settingsHint","Changes apply on the next connection."},{"dnsServer","DNS server"},{"allowLan","Allow access to the local network"},{"autoReconnect","Reconnect if the service stops"},{"diagnosticLogs","Detailed diagnostic logs"},{"applySettings","Save settings"},{"resetSettings","Reset settings"},{"invalidSettings","Check the DNS address and MTU value."},{"settingsReconnect","Saved. Reconnect the VPN."},{"settingsSaved","Settings saved."},{"settingsReset","Default settings restored."}
         }));

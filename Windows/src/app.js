@@ -1,6 +1,6 @@
 const translations = {
   no: {
-    'nav.overview': 'Oversikt', 'nav.profiles': 'Profiler', 'nav.settings': 'Innstillinger',
+    'nav.overview': 'Oversikt', 'nav.profiles': 'Profiler', 'nav.account': 'Konto', 'nav.settings': 'Innstillinger',
     'core.missing': 'Xray-kjerne innebygd', 'header.eyebrow': 'Sikker tilgang',
     'connection.autoNorway': 'Norge · Automatisk', 'connection.heading': 'Tilkobling',
     'connection.protocol': 'Protokoll', 'connection.xrayMissing': 'Xray · ikke konfigurert',
@@ -26,7 +26,7 @@ const translations = {
     'footer.offline': 'Ingen aktiv forbindelse', 'footer.online': 'VPN-tilkobling aktiv'
   },
   ru: {
-    'nav.overview': 'Обзор', 'nav.profiles': 'Профили', 'nav.settings': 'Настройки',
+    'nav.overview': 'Обзор', 'nav.profiles': 'Профили', 'nav.account': 'Аккаунт', 'nav.settings': 'Настройки',
     'core.missing': 'Ядро Xray встроено', 'header.eyebrow': 'Безопасный доступ',
     'connection.autoNorway': 'Норвегия · Автоматически', 'connection.heading': 'Подключение',
     'connection.protocol': 'Протокол', 'connection.xrayMissing': 'Xray · не настроен',
@@ -52,7 +52,7 @@ const translations = {
     'footer.offline': 'Нет активного подключения', 'footer.online': 'VPN-подключение активно'
   },
   en: {
-    'nav.overview': 'Overview', 'nav.profiles': 'Profiles', 'nav.settings': 'Settings',
+    'nav.overview': 'Overview', 'nav.profiles': 'Profiles', 'nav.account': 'Account', 'nav.settings': 'Settings',
     'core.missing': 'Xray core bundled', 'header.eyebrow': 'Secure access',
     'connection.autoNorway': 'Norway · Automatic', 'connection.heading': 'Connection',
     'connection.protocol': 'Protocol', 'connection.xrayMissing': 'Xray · not configured',
@@ -91,6 +91,11 @@ const footerMessage = document.querySelector('#footerMessage');
 const profileList = document.querySelector('#profileList');
 const subscriptionStatus = document.querySelector('#subscriptionStatus');
 const accountStatus = document.querySelector('#accountStatus');
+
+function setAccountStatus(message, tone = 'info') {
+  accountStatus.textContent = message;
+  accountStatus.dataset.tone = message ? tone : '';
+}
 
 function t(key) { return translations[state.language]?.[key] || translations.no[key] || key; }
 
@@ -231,31 +236,65 @@ document.querySelector('#profileLinkForm').addEventListener('submit', async (eve
 
 document.querySelector('#openWebsite').addEventListener('click', () => window.planMyNord?.openExternal('https://planmynord.com/'));
 document.querySelector('#privacyLink').addEventListener('click', () => window.planMyNord?.openExternal('https://planmynord.com/privacy.html'));
-document.querySelector('#accountButton').addEventListener('click', () => setView('account'));
 document.querySelector('#loginAccount').addEventListener('click', async () => {
   const email = document.querySelector('#accountEmailInput').value.trim();
   const password = document.querySelector('#accountPasswordInput').value;
-  accountStatus.textContent = 'Выполняется вход…';
+  setAccountStatus('Выполняется вход…');
   try {
     await window.planMyNord.loginAccount({ email, password });
     await initializeAccount();
-  } catch (error) { accountStatus.textContent = error.message; }
+  } catch (error) { setAccountStatus(error.message, 'error'); }
 });
 document.querySelector('#registerAccount').addEventListener('click', () => window.planMyNord?.registerAccount());
 document.querySelector('#payVpnCard').addEventListener('click', async () => {
-  try { await window.planMyNord.startVpnPayment('card'); } catch (error) { accountStatus.textContent = error.message; }
+  setAccountStatus('Открываю защищённую страницу оплаты Stripe…');
+  try { await window.planMyNord.startVpnPayment('card'); setAccountStatus('Страница оплаты открыта в браузере. После оплаты вернитесь сюда и обновите статус.', 'success'); }
+  catch (error) { setAccountStatus(error.message, 'error'); }
+});
+document.querySelector('#createVpnProfile').addEventListener('click', async () => {
+  const button = document.querySelector('#createVpnProfile');
+  const cancelButton = document.querySelector('#cancelVpnTrial');
+  button.disabled = true;
+  setAccountStatus('Создаю персональный VPN-профиль на 30 дней…');
+  try {
+    const result = await window.planMyNord.createVpnProfile();
+    renderProfiles(result.profiles);
+    const linkRow = document.querySelector('#vpnTrialLinkRow');
+    document.querySelector('#vpnTrialLink').value = result.subscriptionUrl;
+    linkRow.hidden = false;
+    document.querySelector('#vpnTrialStatus').textContent = `Профиль создан · доступ до ${new Date(result.endsAt).toLocaleDateString()}`;
+    cancelButton.disabled = false;
+    setAccountStatus('VPN-профиль добавлен в раздел «Профили».', 'success');
+  } catch (error) { setAccountStatus(error.message, 'error'); }
+  finally { button.disabled = false; }
+});
+document.querySelector('#cancelVpnTrial').addEventListener('click', async () => {
+  const button = document.querySelector('#cancelVpnTrial');
+  button.disabled = true;
+  setAccountStatus('Отзываю пробный VPN-доступ…');
+  try {
+    const result = await window.planMyNord.cancelVpnTrial();
+    renderProfiles(result.profiles || []);
+    document.querySelector('#vpnTrialLinkRow').hidden = true;
+    document.querySelector('#vpnTrialLink').value = '';
+    document.querySelector('#vpnTrialStatus').textContent = 'Пробный доступ отменён, созданный профиль удалён.';
+    setAccountStatus('VPN-доступ отключён.', 'info');
+  } catch (error) { setAccountStatus(error.message, 'error'); button.disabled = false; }
+});
+document.querySelector('#copyVpnTrialLink').addEventListener('click', async () => {
+  try { await window.planMyNord.copyVpnTrialLink(document.querySelector('#vpnTrialLink').value); setAccountStatus('Ссылка скопирована.', 'success'); }
+  catch (error) { setAccountStatus(error.message, 'error'); }
 });
 document.querySelector('#payVpnVipps').addEventListener('click', async () => {
-  try { await window.planMyNord.startVpnPayment('vipps'); } catch (error) { accountStatus.textContent = error.message; }
+  try { await window.planMyNord.startVpnPayment('vipps'); } catch (error) { setAccountStatus(error.message, 'error'); }
 });
 document.querySelector('#refreshAccount').addEventListener('click', async () => {
-  accountStatus.textContent = 'Обновление VPN-профиля…';
+  setAccountStatus('Обновление VPN-профиля…');
   try {
     const result = await window.planMyNord.refreshVpnProfile();
-    accountStatus.textContent = `${result.plan} · ${result.device?.name || 'Windows'}`;
-  } catch (error) { accountStatus.textContent = error.message; }
+    setAccountStatus(`${result.plan} · ${result.device?.name || 'Windows'}`, 'success');
+  } catch (error) { setAccountStatus(error.message, 'error'); }
 });
-document.querySelector('#scanUsbPhone').addEventListener('click', () => initializeUsbPhones());
 document.querySelector('#logoutAccount').addEventListener('click', async () => {
   await window.planMyNord.logoutAccount();
   document.querySelector('#accountEmailInput').value = '';
@@ -287,6 +326,7 @@ async function initializeAccount() {
     signedIn.hidden = !account;
     signedOut.hidden = Boolean(account);
     document.querySelector('#vpnPaymentActions').hidden = !account;
+    document.querySelector('#vpnTrialActions').hidden = !account?.user?.vpnPreview;
     document.querySelector('#accountHint').hidden = Boolean(account);
     if (account) {
       document.querySelector('#accountName').textContent = account.name;
@@ -295,29 +335,39 @@ async function initializeAccount() {
         const result = await window.planMyNord.refreshVpnProfile();
         document.querySelector('#accountPlan').textContent = `${result.plan} · ${result.device?.name || 'Windows'}`;
         renderPaymentState(result.payment);
+        if (account.user?.vpnPreview && result.trialProfile?.active) {
+          document.querySelector('#cancelVpnTrial').disabled = false;
+          document.querySelector('#vpnTrialStatus').textContent = `Пробный VPN-доступ активен до ${new Date(result.trialProfile.endsAt).toLocaleDateString()}.`;
+        } else if (account.user?.vpnPreview) {
+          document.querySelector('#cancelVpnTrial').disabled = true;
+          document.querySelector('#vpnTrialStatus').textContent = 'Пробный доступ не активен.';
+        }
       } catch (error) {
         document.querySelector('#accountPlan').textContent = error.message;
         renderPaymentState(null);
       }
     }
-    try {
-      const vpnProduct = await window.planMyNord?.getVpnProduct();
-      if (vpnProduct?.product) {
-        const product = vpnProduct.product;
-        document.querySelector('#vpnPriceText').textContent = `${product.name} · ${product.priceNok} NOK · ${product.durationDays} дней · до ${product.deviceLimit} устройств`;
-        document.querySelector('#payVpnCard').disabled = !vpnProduct.providers?.stripe || !vpnProduct.configured;
-        document.querySelector('#payVpnVipps').disabled = !vpnProduct.providers?.vipps || !vpnProduct.configured;
-        if (!vpnProduct.configured) accountStatus.textContent = 'Оплата включится после подключения серверной выдачи VPN-профилей.';
+    if (account) {
+      try {
+        const vpnProduct = await window.planMyNord?.getVpnProduct();
+        if (vpnProduct?.product) {
+          const product = vpnProduct.product;
+          document.querySelector('#vpnPriceText').textContent = `${product.name} · ${product.priceNok} NOK · ${product.durationDays} дней · до ${product.deviceLimit} устройств`;
+          document.querySelector('#payVpnCard').disabled = !vpnProduct.providers?.stripe || !vpnProduct.configured;
+          document.querySelector('#payVpnVipps').disabled = !vpnProduct.providers?.vipps || !vpnProduct.configured;
+          if (!vpnProduct.configured) setAccountStatus('Оплата включится после подключения серверной выдачи VPN-профилей.', 'info');
+        }
+      } catch (error) {
+        setAccountStatus(`Не удалось загрузить тариф сайта: ${error.message}. Импортированные профили доступны независимо от аккаунта.`, 'error');
       }
-    } catch (error) {
-      accountStatus.textContent = `Тариф сайта временно недоступен (${error.message}). Импортированные профили можно использовать независимо от аккаунта.`;
     }
   } catch (error) {
     signedIn.hidden = true;
     signedOut.hidden = false;
     document.querySelector('#vpnPaymentActions').hidden = true;
+    document.querySelector('#vpnTrialActions').hidden = true;
     document.querySelector('#accountHint').hidden = false;
-    accountStatus.textContent = error.message;
+    setAccountStatus(error.message, 'error');
     if (connectHint) connectHint.textContent = error.message;
   }
 }
@@ -330,33 +380,6 @@ function renderPaymentState(payment) {
   else element.textContent = 'Не оплачено · VPN-доступ не активен';
 }
 
-async function initializeUsbPhones() {
-  const status = document.querySelector('#usbPhoneStatus');
-  const button = document.querySelector('#scanUsbPhone');
-  button.disabled = true;
-  status.textContent = 'Ищу телефон среди USB-устройств…';
-  try {
-    const result = await window.planMyNord.detectUsbPhones();
-    if (result.error) throw new Error(result.error);
-    if (!result.supported) status.textContent = 'USB-поиск поддерживается только в Windows.';
-    else if (!result.devices.length) status.textContent = 'Телефон по USB не найден. Разблокируйте его и выберите режим «Передача файлов».';
-    else {
-      status.replaceChildren(...result.devices.map((device) => {
-        const row = document.createElement('div');
-        row.className = 'usb-device';
-        const name = document.createElement('strong');
-        name.textContent = device.name;
-        const detail = document.createElement('span');
-        detail.textContent = `${device.type} · ${device.status || 'подключён'}`;
-        row.append(name, detail);
-        return row;
-      }));
-    }
-  } catch (error) { status.textContent = error.message; }
-  finally { button.disabled = false; }
-}
-
 initializeVpn();
 initializeAccount();
-initializeUsbPhones();
 window.planMyNord?.listProfiles().then(renderProfiles).catch((error) => { document.querySelector('#profileLinkStatus').textContent = error.message; });
