@@ -126,12 +126,13 @@ async function refreshVpnProfile() {
 }
 
 function decodeSubscription(value) {
-  const text = String(value || '').trim();
+  const text = String(value || '').replace(/^\uFEFF/, '').trim();
   const supported = /^(vless|vmess|trojan|ss|hysteria2|hy2|tuic):\/\//im;
   if (supported.test(text)) return text;
   try {
     const decoded = Buffer.from(text.replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString('utf8');
-    return supported.test(decoded) || decoded.trim().startsWith('{') ? decoded : text;
+    const normalized = decoded.replace(/^\uFEFF/, '').trim();
+    return supported.test(normalized) || normalized.startsWith('{') ? normalized : text;
   }
   catch { return text; }
 }
@@ -269,7 +270,7 @@ function singBoxOutbound(link) {
 }
 
 function parseSubscription(body, fallbackName) {
-  const text = decodeSubscription(body);
+  const text = decodeSubscription(body).replace(/^\uFEFF/, '').trim();
   if (text.trim().startsWith('{')) {
     const document = JSON.parse(text);
     const outbounds = Array.isArray(document.outbounds) ? document.outbounds : document.outbound ? [document.outbound] : [];
@@ -584,6 +585,7 @@ app.whenReady().then(() => {
     if (!value) throw new Error('Вставьте ссылку подписки или VPN-конфигурацию');
     let body = value;
     let name = 'VPN-профиль';
+    let responseDetails = null;
     if (/^https:\/\//i.test(value)) {
       const url = new URL(value);
       if (url.username || url.password) throw new Error('Ссылка подписки не должна содержать логин или пароль в адресе');
@@ -596,8 +598,26 @@ app.whenReady().then(() => {
       body = await response.text();
       if (Buffer.byteLength(body, 'utf8') > 1024 * 1024) throw new Error('Файл подписки превышает 1 МБ');
       name = url.hostname;
+      const finalPath = new URL(response.url || url).pathname.split('/').filter(Boolean);
+      responseDetails = {
+        status: response.status,
+        contentType: response.headers.get('content-type') || 'не указан',
+        requestedHost: url.host,
+        requestedRouteShape: `/${url.pathname.split('/').filter(Boolean).map((segment) => segment.toLowerCase() === 'sub' ? 'sub' : '…').join('/')}`,
+        requestedSubSegments: url.pathname.split('/').filter((segment) => segment.toLowerCase() === 'sub').length,
+        host: new URL(response.url || url).host,
+        routeShape: `/${finalPath.map((segment) => segment.toLowerCase() === 'sub' ? 'sub' : '…').join('/')}`,
+        subSegments: finalPath.filter((segment) => segment.toLowerCase() === 'sub').length
+      };
     }
-    const additions = parseSubscription(body, name);
+    let additions;
+    try { additions = parseSubscription(body, name); }
+    catch (error) {
+      if (!responseDetails) throw error;
+      const trimmed = body.replace(/^\uFEFF/, '').trimStart();
+      const format = !trimmed ? 'пустой ответ' : /^<!doctype\s+html|^<html/i.test(trimmed) ? 'HTML-страница' : /^\s*\{/.test(trimmed) ? 'JSON без распознанных профилей' : /^[A-Za-z0-9+/_=-]+$/.test(trimmed) ? 'Base64 без распознанных профилей' : 'текст без распознанных ссылок';
+      throw new Error(`${error.message}. Ответ подписки: HTTP ${responseDetails.status}, ${responseDetails.contentType}, ${Buffer.byteLength(body, 'utf8')} байт; формат: ${format}; запрос ${responseDetails.requestedHost}, маршрут ${responseDetails.requestedRouteShape}, сегментов /sub: ${responseDetails.requestedSubSegments}; после перенаправления ${responseDetails.host}, маршрут ${responseDetails.routeShape}, сегментов /sub: ${responseDetails.subSegments}.`);
+    }
     const profiles = await readProfiles();
     await writeProfiles([...profiles, ...additions]);
     if (selectFirst || !selectedProfileId) selectedProfileId = additions[0].id;
@@ -633,18 +653,67 @@ app.whenReady().then(() => {
     if (subscriptionUrl.protocol !== 'https:' || !(subscriptionUrl.hostname === 'vpn.planmynord.com' || subscriptionUrl.hostname.endsWith('.planmynord.com'))) {
       throw new Error('Сервер вернул небезопасную или неизвестную ссылку VPN-подписки.');
     }
+    const subscriptionSegments = subscriptionUrl.pathname.split('/').filter(Boolean);
+    const hasSubscriptionRoute = subscriptionSegments.some((segment) => segment.toLowerCase() === 'sub');
+    if (subscriptionUrl.hostname === 'vpn.planmynord.com' && (subscriptionUrl.port === '8001' || !hasSubscriptionRoute)) {
+      throw new Error('Сервер вернул адрес панели VPN вместо ссылки подписки (порт :8001 или отсутствует маршрут /sub/…). Проверьте VPN_SUBSCRIPTION_BASE_URL в .env работающего сервера: HTTPS, порт подписки :2096, путь /sub/…; затем перезапустите службу PlanMyNord командой sudo systemctl restart planmynord и повторите создание профиля.');
+    }
     let cached = null;
     try { cached = JSON.parse(await fs.readFile(trialProfileFile(), 'utf8')); } catch {}
     const profiles = await readProfiles();
     let imported;
+    let resolvedSubscriptionUrl = subscriptionUrl;
     if (cached?.profileIds?.length && cached.profileIds.every((id) => profiles.some((profile) => profile.id === id))) {
       imported = { added: 0, addedProfileIds: cached.profileIds, profiles: profiles.map(({ id, name, protocol, server }) => ({ id, name, protocol, server, selected: id === selectedProfileId })) };
     } else {
-      imported = await addProfileLink(subscriptionUrl.toString(), { selectFirst: true });
+      try {
+        imported = await addProfileLink(subscriptionUrl.toString(), { selectFirst: true });
+      } catch (error) {
+        const segments = subscriptionUrl.pathname.split('/').filter(Boolean);
+        const firstSub = segments.findIndex((segment) => segment.toLowerCase() === 'sub');
+        const extraSubIndexes = segments.map((segment, index) => segment.toLowerCase() === 'sub' && index > firstSub && index < segments.length - 1 ? index : -1).filter((index) => index >= 0);
+        const mayRepairRoute = subscriptionUrl.hostname === 'vpn.planmynord.com' && firstSub >= 0 && extraSubIndexes.length > 0 && /формат: HTML-страница/i.test(error.message);
+        if (!mayRepairRoute) throw error;
+        let repairError = error;
+        for (const index of extraSubIndexes) {
+          const correctedUrl = new URL(subscriptionUrl);
+          const correctedSegments = segments.filter((_segment, segmentIndex) => segmentIndex !== index);
+          correctedUrl.pathname = `/${correctedSegments.join('/')}`;
+          try {
+            imported = await addProfileLink(correctedUrl.toString(), { selectFirst: true });
+            resolvedSubscriptionUrl = correctedUrl;
+            break;
+          } catch (nextError) { repairError = nextError; }
+        }
+        if (!imported) throw new Error(`${repairError.message} Автопроверка также убрала повторный сегмент /sub.`);
+      }
       await fs.mkdir(app.getPath('userData'), { recursive: true });
       await fs.writeFile(trialProfileFile(), JSON.stringify({ profileIds: imported.addedProfileIds, endsAt: data.endsAt }), { mode: 0o600 });
     }
-    return { ...imported, endsAt: data.endsAt, subscriptionUrl: subscriptionUrl.toString() };
+    const trialProfileIds = imported.addedProfileIds?.length ? imported.addedProfileIds : (cached?.profileIds || []);
+    const storedProfiles = await readProfiles();
+    const originalName = storedProfiles.find((profile) => trialProfileIds.includes(profile.id))?.name || account.name || account.email.split('@')[0] || 'VPN';
+    const cleanName = originalName.replace(/^Norway-/, '').replace(/\s*\|\s*⏳\d+D$/, '');
+    const expiresAt = Date.parse(data.endsAt || cached?.endsAt || '');
+    const daysLeft = Number.isFinite(expiresAt) ? Math.max(0, Math.floor((expiresAt - Date.now()) / 86_400_000)) : 30;
+    const displayName = `Norway-${cleanName}|⏳${daysLeft}D`;
+    const renamedProfiles = storedProfiles.map((profile) => trialProfileIds.includes(profile.id) ? { ...profile, name: displayName } : profile);
+    if (renamedProfiles.some((profile, index) => profile.name !== storedProfiles[index]?.name)) await writeProfiles(renamedProfiles);
+    const resolvedUrl = resolvedSubscriptionUrl.toString();
+    let linkCopied = false;
+    try {
+      clipboard.writeText(resolvedUrl);
+      linkCopied = true;
+    } catch {}
+    return {
+      ...imported,
+      addedProfileIds: trialProfileIds,
+      profiles: renamedProfiles.map(({ id, name, protocol, server }) => ({ id, name, protocol, server, selected: id === selectedProfileId })),
+      displayName,
+      endsAt: data.endsAt || cached?.endsAt,
+      subscriptionUrl: resolvedUrl,
+      linkCopied
+    };
   });
   ipcMain.handle('account:cancel-vpn-trial', async () => {
     const account = await readAccount();

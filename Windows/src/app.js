@@ -251,11 +251,11 @@ document.querySelector('#payVpnCard').addEventListener('click', async () => {
   try { await window.planMyNord.startVpnPayment('card'); setAccountStatus('Страница оплаты открыта в браузере. После оплаты вернитесь сюда и обновите статус.', 'success'); }
   catch (error) { setAccountStatus(error.message, 'error'); }
 });
-document.querySelector('#createVpnProfile').addEventListener('click', async () => {
+async function createVpnProfileInApp() {
   const button = document.querySelector('#createVpnProfile');
   const cancelButton = document.querySelector('#cancelVpnTrial');
   button.disabled = true;
-  setAccountStatus('Создаю персональный VPN-профиль на 30 дней…');
+  setAccountStatus('Подготавливаю персональный VPN-профиль…');
   try {
     const result = await window.planMyNord.createVpnProfile();
     renderProfiles(result.profiles);
@@ -264,10 +264,17 @@ document.querySelector('#createVpnProfile').addEventListener('click', async () =
     linkRow.hidden = false;
     document.querySelector('#vpnTrialStatus').textContent = `Профиль создан · доступ до ${new Date(result.endsAt).toLocaleDateString()}`;
     cancelButton.disabled = false;
-    setAccountStatus('VPN-профиль добавлен в раздел «Профили».', 'success');
-  } catch (error) { setAccountStatus(error.message, 'error'); }
+    setAccountStatus(result.linkCopied
+      ? `Профиль «${result.displayName}» готов. Ссылка скопирована.`
+      : `Профиль «${result.displayName}» готов, но ссылку не удалось скопировать.`, result.linkCopied ? 'success' : 'error');
+    return true;
+  } catch (error) {
+    setAccountStatus(error.message, 'error');
+    return false;
+  }
   finally { button.disabled = false; }
-});
+}
+document.querySelector('#createVpnProfile').addEventListener('click', createVpnProfileInApp);
 document.querySelector('#cancelVpnTrial').addEventListener('click', async () => {
   const button = document.querySelector('#cancelVpnTrial');
   button.disabled = true;
@@ -342,6 +349,7 @@ async function initializeAccount() {
           document.querySelector('#cancelVpnTrial').disabled = true;
           document.querySelector('#vpnTrialStatus').textContent = 'Пробный доступ не активен.';
         }
+        if (account.user?.vpnPreview) await createVpnProfileInApp();
       } catch (error) {
         document.querySelector('#accountPlan').textContent = error.message;
         renderPaymentState(null);
