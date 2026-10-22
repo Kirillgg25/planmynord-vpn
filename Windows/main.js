@@ -1,9 +1,10 @@
-const { app, BrowserWindow, ipcMain, dialog, shell, net, safeStorage, clipboard } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell, net, session, safeStorage, clipboard } = require('electron');
 const path = require('path');
 const fs = require('fs/promises');
 const { spawn, execFile } = require('child_process');
 const tcp = require('node:net');
-const { randomUUID } = require('crypto');
+const http = require('node:http');
+const { createHash, randomBytes, randomUUID } = require('crypto');
 
 let mainWindow;
 let singBoxProcess;
@@ -27,6 +28,7 @@ const accountFile = () => path.join(app.getPath('userData'), 'account.dat');
 const profilesFile = () => path.join(app.getPath('userData'), 'profiles.dat');
 const trialProfileFile = () => path.join(app.getPath('userData'), 'vpn-trial-profile.json');
 const API_BASE = 'https://planmynord.com';
+const SITE_LOGIN_PARTITION = 'persist:planmynord-site-login';
 
 function execFileAsync(file, args, options = {}) {
   return new Promise((resolve, reject) => {
@@ -92,6 +94,123 @@ async function accountLogin(email, password) {
   return account;
 }
 
+function oauthResultPage(success) {
+  const status = success
+    ? { icon: '✓', eyebrow: 'АККАУНТ ПОДКЛЮЧЁН', title: 'Вход выполнен', copy: 'Google подтвердил вход. Вернитесь в PlanMyNord VPN — аккаунт уже передан приложению.', tone: 'success' }
+    : { icon: '×', eyebrow: 'ВХОД НЕ ЗАВЕРШЁН', title: 'Не удалось войти', copy: 'Вход был отменён или не прошёл проверку. Вернитесь в PlanMyNord VPN и попробуйте ещё раз.', tone: 'error' };
+  return `<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#08111f">
+  <title>${status.title} · PlanMyNord VPN</title>
+  <style>
+    :root { color-scheme: dark; font-family: Inter, "Segoe UI", Arial, sans-serif; background: #08111f; color: #eef5ff; }
+    * { box-sizing: border-box; }
+    body { min-height: 100vh; margin: 0; display: grid; place-items: center; padding: 28px;
+      background: radial-gradient(ellipse at 50% 0%, #12325a 0, #0b1a2d 38%, #08111f 76%); }
+    .card { width: min(100%, 460px); padding: 38px; border: 1px solid #263a53; border-radius: 24px;
+      background: linear-gradient(145deg, rgba(17, 32, 51, .96), rgba(11, 23, 39, .98));
+      box-shadow: 0 28px 80px rgba(0, 0, 0, .38); text-align: center; }
+    .brand { display: flex; justify-content: center; align-items: center; gap: 11px; margin-bottom: 34px; }
+    .brand-mark { display: grid; place-items: center; width: 38px; height: 38px; border: 1px solid #3978c5;
+      border-radius: 12px; background: linear-gradient(145deg, #174b8b, #0c2949); color: #8bdcff; font-size: 20px; font-weight: 700; }
+    .brand-name { font-size: 15px; font-weight: 700; letter-spacing: .01em; }
+    .brand-name span { display: block; margin-top: 3px; color: #62cafa; font-size: 10px; font-weight: 600; letter-spacing: .19em; text-align: left; }
+    .status-icon { display: grid; place-items: center; width: 64px; height: 64px; margin: 0 auto 20px;
+      border: 1px solid ${success ? '#236d64' : '#773d50'}; border-radius: 20px;
+      background: ${success ? 'rgba(24, 133, 112, .17)' : 'rgba(176, 56, 76, .16)'};
+      color: ${success ? '#63e0bd' : '#ff91a4'}; font-size: 30px; font-weight: 600; }
+    .eyebrow { margin: 0 0 10px; color: ${success ? '#63e0bd' : '#ff91a4'}; font-size: 10px; font-weight: 700; letter-spacing: .16em; }
+    h1 { margin: 0; font-size: clamp(25px, 6vw, 30px); letter-spacing: -.035em; }
+    .copy { max-width: 340px; margin: 13px auto 0; color: #a9bbd1; font-size: 14px; line-height: 1.7; }
+    .hint { display: flex; align-items: center; justify-content: center; gap: 9px; margin-top: 28px; padding: 13px 15px;
+      border: 1px solid #263a53; border-radius: 13px; background: rgba(8, 17, 31, .55); color: #d7e6f8; font-size: 12px; }
+    .hint-dot { width: 7px; height: 7px; flex: 0 0 7px; border-radius: 50%; background: #53c5fa; box-shadow: 0 0 12px #53c5fa; }
+    footer { margin-top: 27px; color: #6f839c; font-size: 11px; }
+    @media (max-width: 420px) { .card { padding: 30px 22px; } }
+  </style>
+</head>
+<body>
+  <main class="card">
+    <div class="brand"><div class="brand-mark">盾</div><div class="brand-name">PlanMyNord<span>VPN</span></div></div>
+    <div class="status-icon" aria-hidden="true">${status.icon}</div>
+    <p class="eyebrow">${status.eyebrow}</p>
+    <h1>${status.title}</h1>
+    <p class="copy">${status.copy}</p>
+    <div class="hint"><span class="hint-dot"></span><span>Можно закрыть эту вкладку и вернуться в приложение</span></div>
+    <footer>Безопасное подключение к PlanMyNord VPN</footer>
+  </main>
+</body>
+</html>`;
+}
+
+async function accountLoginViaWebsite() {
+  const codeVerifier = randomBytes(32).toString('base64url');
+  const codeChallenge = createHash('sha256').update(codeVerifier).digest('base64url');
+  let receiveTicket;
+  const ticketPromise = new Promise((resolve, reject) => { receiveTicket = { resolve, reject }; });
+  const callbackServer = http.createServer((request, response) => {
+    let callbackUrl;
+    try { callbackUrl = new URL(request.url, 'http://127.0.0.1'); }
+    catch { response.writeHead(400).end('Invalid callback'); return; }
+    if (request.method !== 'GET' || callbackUrl.pathname !== '/oauth/callback') {
+      response.writeHead(404).end('Not found');
+      return;
+    }
+    const error = callbackUrl.searchParams.get('error');
+    const ticket = callbackUrl.searchParams.get('ticket') || '';
+    if (error) {
+      response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+      response.end(oauthResultPage(false));
+      receiveTicket.reject(new Error('Вход через сайт отменён.'));
+      return;
+    }
+    if (!/^[A-Za-z0-9_-]{40,100}$/.test(ticket)) {
+      response.writeHead(400).end('Invalid sign-in ticket');
+      return;
+    }
+    response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+    response.end(oauthResultPage(true));
+    receiveTicket.resolve(ticket);
+  });
+
+  await new Promise((resolve, reject) => {
+    callbackServer.once('error', reject);
+    callbackServer.listen(0, '127.0.0.1', resolve);
+  });
+  const callbackAddress = callbackServer.address();
+  const redirectUri = `http://127.0.0.1:${callbackAddress.port}/oauth/callback`;
+  const startUrl = new URL('/api/desktop-auth/start', API_BASE);
+  startUrl.searchParams.set('code_challenge', codeChallenge);
+  startUrl.searchParams.set('redirect_uri', redirectUri);
+  let timeout;
+  try {
+    await shell.openExternal(startUrl.toString());
+    const ticket = await Promise.race([
+      ticketPromise,
+      new Promise((_resolve, reject) => { timeout = setTimeout(() => reject(new Error('Время ожидания входа истекло. Попробуйте снова.')), 5 * 60 * 1000); })
+    ]);
+    const response = await net.fetch(`${API_BASE}/api/desktop-auth/exchange`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', accept: 'application/json' },
+      body: JSON.stringify({ ticket, code_verifier: codeVerifier })
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || !data.user) throw new Error(data.error || `HTTP ${response.status}`);
+    const rawCookie = response.headers.get('set-cookie') || '';
+    const match = rawCookie.match(/(?:^|,\s*)(connect\.sid=[^;,]+)/);
+    if (!match) throw new Error('Сайт не передал сессию приложению. Попробуйте войти ещё раз.');
+    const account = { cookie: match[1], name: data.user.name || '', email: data.user.email || '' };
+    await writeAccount(account);
+    return { name: account.name, email: account.email };
+  } finally {
+    clearTimeout(timeout);
+    callbackServer.close();
+  }
+}
+
 async function refreshVpnProfile() {
   const account = await readAccount();
   if (!account?.cookie) throw new Error('Сначала войдите в аккаунт PlanMyNord.');
@@ -123,6 +242,35 @@ async function refreshVpnProfile() {
     trialProfile: accountResult.trialProfile || null,
     payment: { paid, status: paid ? 'paid' : 'unpaid', endsAt: entitlement.endsAt || null }
   };
+}
+
+async function restoreAccountFromCookie(cookie) {
+  const response = await net.fetch(`${API_BASE}/api/me`, {
+    headers: { cookie, accept: 'application/json' }
+  });
+  const data = await response.json().catch(() => ({}));
+  if (response.status === 401 || response.status === 403) return null;
+  if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
+  if (!data.user) return null;
+  const account = { cookie, name: data.user.name || '', email: data.user.email || '' };
+  await writeAccount(account);
+  return { name: account.name, email: account.email, user: data.user };
+}
+
+async function uploadAccountAvatar(avatarDataUrl) {
+  const account = await readAccount();
+  if (!account?.cookie) throw new Error('Сначала войдите в аккаунт PlanMyNord.');
+  if (typeof avatarDataUrl !== 'string' || !avatarDataUrl.startsWith('data:image/') || avatarDataUrl.length > 1_900_000) {
+    throw new Error('Не удалось подготовить изображение. Выберите другое фото.');
+  }
+  const response = await net.fetch(`${API_BASE}/api/avatar`, {
+    method: 'POST',
+    headers: { cookie: account.cookie, 'content-type': 'application/json', accept: 'application/json' },
+    body: JSON.stringify({ avatarUrl: avatarDataUrl })
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok || !data.avatarUrl) throw new Error(data.error || `HTTP ${response.status}`);
+  return data.avatarUrl;
 }
 
 function decodeSubscription(value) {
@@ -626,18 +774,30 @@ app.whenReady().then(() => {
   ipcMain.handle('profiles:add-link', (_event, input) => addProfileLink(input));
   ipcMain.handle('account:get', async () => {
     const account = await readAccount();
-    if (!account) return null;
-    try {
-      const response = await net.fetch(`${API_BASE}/api/me`, { headers: { cookie: account.cookie, accept: 'application/json' } });
-      const data = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
-      const updated = { ...account, name: data.user.name, email: data.user.email };
-      await writeAccount(updated);
-      return { name: updated.name, email: updated.email, user: data.user };
-    } catch (error) { await fs.rm(accountFile(), { force: true }); throw error; }
+    if (account?.cookie) {
+      const savedSession = await restoreAccountFromCookie(account.cookie);
+      if (savedSession) return savedSession;
+      await fs.rm(accountFile(), { force: true });
+    }
+    const loginSession = session.fromPartition(SITE_LOGIN_PARTITION);
+    const cookies = await loginSession.cookies.get({ url: API_BASE });
+    const sessionCookie = cookies.find((cookie) => cookie.name === 'connect.sid');
+    if (sessionCookie?.value) {
+      const cookie = `${sessionCookie.name}=${sessionCookie.value}`;
+      const siteSession = await restoreAccountFromCookie(cookie);
+      if (siteSession) return siteSession;
+      await loginSession.clearStorageData({ storages: ['cookies'] });
+    }
+    return null;
   });
   ipcMain.handle('account:login', (_event, credentials) => accountLogin(credentials.email, credentials.password));
-  ipcMain.handle('account:logout', async () => { await fs.rm(accountFile(), { force: true }); return true; });
+  ipcMain.handle('account:login-website', () => accountLoginViaWebsite());
+  ipcMain.handle('account:upload-avatar', (_event, avatarDataUrl) => uploadAccountAvatar(avatarDataUrl));
+  ipcMain.handle('account:logout', async () => {
+    await fs.rm(accountFile(), { force: true });
+    await session.fromPartition(SITE_LOGIN_PARTITION).clearStorageData({ storages: ['cookies'] });
+    return true;
+  });
   ipcMain.handle('account:refresh-vpn', refreshVpnProfile);
   ipcMain.handle('account:create-vpn-profile', async () => {
     const account = await readAccount();

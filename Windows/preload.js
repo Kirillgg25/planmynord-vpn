@@ -8,6 +8,8 @@ contextBridge.exposeInMainWorld('planMyNord', {
   removeProfile: (id) => ipcRenderer.invoke('profiles:remove', id),
   getAccount: () => ipcRenderer.invoke('account:get'),
   loginAccount: (credentials) => ipcRenderer.invoke('account:login', credentials),
+  loginWebsiteAccount: () => ipcRenderer.invoke('account:login-website'),
+  uploadAvatar: (avatarDataUrl) => ipcRenderer.invoke('account:upload-avatar', avatarDataUrl),
   logoutAccount: () => ipcRenderer.invoke('account:logout'),
   refreshVpnProfile: () => ipcRenderer.invoke('account:refresh-vpn'),
   createVpnProfile: () => ipcRenderer.invoke('account:create-vpn-profile'),

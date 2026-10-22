@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src https:; object-src 'none'; base-uri 'none'; form-action 'none'" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data: https://*.googleusercontent.com; connect-src https:; object-src 'none'; base-uri 'none'; form-action 'none'" />
     <title>PlanMyNord VPN</title>
     <link rel="stylesheet" href="styles.css" />
   </head>
@@ -23,7 +23,7 @@
           </div>
         </div>
 
-        <nav aria-label="Hovedmeny">
+        <nav aria-label="Hovedmeny" data-i18n-aria-label="aria.mainMenu">
           <button class="nav-item active" data-view="home" data-i18n="nav.overview">Oversikt</button>
           <button class="nav-item" data-view="profiles" data-i18n="nav.profiles">Profiler</button>
           <button class="nav-item" data-view="account" data-i18n="nav.account">Аккаунт</button>
@@ -43,7 +43,7 @@
             <h1>PlanMyNord VPN</h1>
           </div>
           <div class="top-actions">
-            <div class="language-switch" role="group" aria-label="Language">
+            <div class="language-switch" role="group" aria-label="Språk" data-i18n-aria-label="aria.language">
               <button class="language-button active" data-language="no">NO</button>
               <button class="language-button" data-language="ru">RU</button>
               <button class="language-button" data-language="en">EN</button>
@@ -60,7 +60,7 @@
                 <span id="profileName" data-i18n="profiles.noneSelected">Профиль не выбран</span>
               </div>
 
-              <button id="connectButton" class="power-button" aria-label="Koble til">
+              <button id="connectButton" class="power-button" aria-label="Koble til" data-i18n-aria-label="aria.connect">
                 <svg viewBox="0 0 64 64" aria-hidden="true">
                   <path d="M32 8v23M18 16.5a23 23 0 1 0 28 0" fill="none" stroke="currentColor" stroke-width="6" stroke-linecap="round"/>
                 </svg>
@@ -102,7 +102,7 @@
                 </div>
               </article>
 
-              <article class="notice-card"><strong>PlanMyNord VPN</strong><p>Windows kan be om administratorrettigheter for å opprette VPN-adapteren.</p></article>
+              <article class="notice-card"><strong>PlanMyNord VPN</strong><p data-i18n="notice.windows">Windows kan be om administratorrettigheter for å opprette VPN-adapteren.</p></article>
             </div>
           </div>
         </section>
@@ -116,7 +116,7 @@
             <label for="profileLink" data-i18n="profiles.addLink">Добавить VPN по ссылке</label>
             <p data-i18n="profiles.linkHint">Подписка или одна ссылка VLESS, VMess, Trojan, Shadowsocks, Hysteria2 или TUIC от любого провайдера.</p>
             <form id="profileLinkForm" class="subscription-form">
-              <input id="profileLink" type="text" placeholder="https://provider.example/sub/... или vless://…" autocomplete="off" />
+              <input id="profileLink" type="text" placeholder="https://provider.example/sub/... or vless://…" data-i18n-placeholder="aria.profileLink" autocomplete="off" />
               <button class="button primary" type="submit" data-i18n="profiles.add">Добавить</button>
             </form>
             <span id="profileLinkStatus" class="subscription-status" aria-live="polite"></span>
@@ -140,32 +140,44 @@
         </section>
 
         <section id="accountView" class="view">
-          <div class="section-heading"><div><p class="eyebrow">PlanMyNord</p><h2>Общий аккаунт сайта и VPN</h2></div></div>
+          <div class="section-heading"><div><p class="eyebrow">PlanMyNord</p><h2 data-i18n="account.title">Felles konto for nettstedet og VPN</h2></div></div>
           <article class="subscription-card account-card" id="accountPanel">
             <div class="account-intro">
               <span class="account-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 2.5 20 6v5.5c0 5.1-3.4 8.5-8 10-4.6-1.5-8-4.9-8-10V6l8-3.5Z"/><path d="m8.7 12.1 2.1 2.1 4.7-5"/></svg></span>
-              <div><h3>PlanMyNord VPN</h3><p id="accountHint">Войдите в аккаунт сайта, чтобы управлять VPN-подпиской и устройствами.</p></div>
+              <div><h3>PlanMyNord VPN</h3><p id="accountHint" data-i18n="account.hint">Logg inn på nettstedskontoen for å administrere VPN-abonnementet og enhetene dine.</p></div>
             </div>
             <div id="signedInAccount" class="account-details" hidden>
-              <strong id="accountName"></strong><span id="accountEmail"></span>
+              <div class="account-user-profile">
+                <button id="accountAvatarPicker" class="account-avatar-picker" type="button" data-i18n-aria-label="account.changeAvatar" aria-label="Загрузить аватар">
+                  <img id="accountAvatarImage" alt="" hidden />
+                  <span id="accountAvatarFallback">?</span>
+                  <span class="account-avatar-edit" aria-hidden="true">+</span>
+                </button>
+                <input id="accountAvatarInput" type="file" accept="image/jpeg,image/png,image/webp" hidden />
+                <strong id="accountName"></strong>
+                <span id="accountEmail"></span>
+                <button id="accountUploadAvatar" class="text-link account-avatar-upload" type="button" data-i18n="account.changeAvatar">Загрузить аватар</button>
+              </div>
               <p id="accountPlan"></p>
-              <p id="paymentState" class="payment-state unknown">Статус оплаты проверяется…</p>
-              <div class="account-actions"><button id="refreshAccount" class="button primary">Обновить аккаунт</button><button id="logoutAccount" class="button ghost">Выйти</button></div>
+              <p id="paymentState" class="payment-state unknown" data-i18n="account.paymentChecking">Kontrollerer betalingsstatus…</p>
+              <div class="account-actions"><button id="refreshAccount" class="button primary" data-i18n="account.refresh">Oppdater konto</button><button id="logoutAccount" class="button ghost" data-i18n="account.logout">Logg ut</button></div>
             </div>
             <div id="signedOutAccount" class="account-form">
-              <div class="account-field"><label for="accountEmailInput">Электронная почта</label><input id="accountEmailInput" type="email" autocomplete="username" placeholder="name@example.com" /></div>
-              <div class="account-field"><label for="accountPasswordInput">Пароль</label><input id="accountPasswordInput" type="password" autocomplete="current-password" placeholder="Введите пароль" /></div>
-              <div class="account-actions"><button id="loginAccount" class="button primary">Войти</button><button id="registerAccount" class="button ghost">Создать аккаунт</button></div>
+              <p data-i18n="account.websiteLoginCopy">Войдите через защищённую страницу PlanMyNord.</p>
+              <div class="account-field"><label for="accountEmailInput" data-i18n="account.email">Электронная почта</label><input id="accountEmailInput" type="email" autocomplete="username" placeholder="name@example.com" /></div>
+              <div class="account-field"><label for="accountPasswordInput" data-i18n="account.password">Пароль</label><input id="accountPasswordInput" type="password" autocomplete="current-password" placeholder="Введите пароль" data-i18n-placeholder="account.passwordPlaceholder" /></div>
+              <div class="account-actions"><button id="loginAccount" class="button primary" data-i18n="account.login">Войти</button><button id="registerAccount" class="button ghost" data-i18n="account.register">Создать аккаунт</button></div>
+              <button id="loginWebsiteAccount" class="button ghost" data-i18n="account.websiteLogin">Войти через сайт / Google</button>
             </div>
             <div id="vpnPaymentActions" hidden>
-              <p id="vpnPriceText">Тариф PlanMyNord VPN</p>
-              <button id="payVpnCard" class="button primary">Оплатить картой</button>
-              <button id="payVpnVipps" class="button ghost">Оплатить через Vipps</button>
+              <p id="vpnPriceText" data-i18n="account.priceDefault">PlanMyNord VPN-abonnement</p>
+              <button id="payVpnCard" class="button primary" data-i18n="account.payCard">Betal med kort</button>
+              <button id="payVpnVipps" class="button ghost" data-i18n="account.payVipps">Betal med Vipps</button>
             </div>
             <div id="vpnTrialActions" class="vpn-trial-panel" hidden>
-              <div><strong>Проверить VPN · 30 дней</strong><p>Создаст рабочий профиль в вашей учётной записи. Без списания денег.</p></div>
-              <div class="account-actions"><button id="createVpnProfile" class="button primary">Создать VPN-профиль</button><button id="cancelVpnTrial" class="button ghost" disabled>Отменить пробный доступ</button></div>
-              <div id="vpnTrialLinkRow" class="vpn-trial-link-row" hidden><input id="vpnTrialLink" type="text" readonly aria-label="Ссылка VPN-подписки" /><button id="copyVpnTrialLink" class="button ghost">Копировать ссылку</button></div>
+              <div><strong data-i18n="account.trialHeading">Test VPN · 30 dager</strong><p data-i18n="account.trialCopy">Lager en fungerende profil på kontoen din. Ingen betaling belastes.</p></div>
+              <div class="account-actions"><button id="createVpnProfile" class="button primary" data-i18n="account.createProfile">Opprett VPN-profil</button><button id="cancelVpnTrial" class="button ghost" disabled data-i18n="account.cancelTrial">Avbryt prøvetilgang</button></div>
+              <div id="vpnTrialLinkRow" class="vpn-trial-link-row" hidden><input id="vpnTrialLink" type="text" readonly aria-label="VPN-abonnementslenke" data-i18n-aria-label="aria.subscriptionLink" /><button id="copyVpnTrialLink" class="button ghost" data-i18n="account.copyLink">Kopier lenke</button></div>
               <p id="vpnTrialStatus" class="vpn-trial-status" aria-live="polite"></p>
             </div>
             <p id="accountStatus" class="subscription-status account-status" aria-live="polite"></p>
