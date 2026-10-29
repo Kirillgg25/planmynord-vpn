@@ -823,7 +823,11 @@ app.whenReady().then(() => {
     const profiles = await readProfiles();
     let imported;
     let resolvedSubscriptionUrl = subscriptionUrl;
-    if (cached?.profileIds?.length && cached.profileIds.every((id) => profiles.some((profile) => profile.id === id))) {
+    const previousProfileIds = new Set(cached?.profileIds || []);
+    const replacingConnectedProfile = previousProfileIds.has(selectedProfileId) && Boolean(singBoxProcess);
+    const requestedSubscriptionHash = createHash('sha256').update(subscriptionUrl.toString()).digest('hex');
+    const cachedLinkMatches = cached?.requestedSubscriptionHash === requestedSubscriptionHash;
+    if (cachedLinkMatches && previousProfileIds.size && [...previousProfileIds].every((id) => profiles.some((profile) => profile.id === id))) {
       imported = { added: 0, addedProfileIds: cached.profileIds, profiles: profiles.map(({ id, name, protocol, server }) => ({ id, name, protocol, server, selected: id === selectedProfileId })) };
     } else {
       try {
@@ -847,8 +851,15 @@ app.whenReady().then(() => {
         }
         if (!imported) throw new Error(`${repairError.message} Автопроверка также убрала повторный сегмент /sub.`);
       }
+      if (previousProfileIds.size) {
+        if (replacingConnectedProfile) await stopVpn();
+        const currentProfiles = await readProfiles();
+        const retainedProfiles = currentProfiles.filter((profile) => !previousProfileIds.has(profile.id));
+        await writeProfiles(retainedProfiles);
+        imported.profiles = retainedProfiles.map(({ id, name, protocol, server }) => ({ id, name, protocol, server, selected: id === selectedProfileId }));
+      }
       await fs.mkdir(app.getPath('userData'), { recursive: true });
-      await fs.writeFile(trialProfileFile(), JSON.stringify({ profileIds: imported.addedProfileIds, endsAt: data.endsAt }), { mode: 0o600 });
+      await fs.writeFile(trialProfileFile(), JSON.stringify({ profileIds: imported.addedProfileIds, endsAt: data.endsAt, requestedSubscriptionHash }), { mode: 0o600 });
     }
     const trialProfileIds = imported.addedProfileIds?.length ? imported.addedProfileIds : (cached?.profileIds || []);
     const storedProfiles = await readProfiles();
