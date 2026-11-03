@@ -1,0 +1,10 @@
+[Unit]
+Description=Run 3X-UI backup on the first day of each month
+
+[Timer]
+OnCalendar=*-*-01 03:00:00
+Persistent=true
+Unit=3x-ui-backup.service
+
+[Install]
+WantedBy=timers.target

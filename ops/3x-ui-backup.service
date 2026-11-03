@@ -1,0 +1,11 @@
+[Unit]
+Description=Monthly 3X-UI SQLite and certificate backup
+ConditionPathExists=/etc/x-ui/x-ui.db
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+UMask=0077
+ExecStart=/usr/bin/flock -n /run/lock/3x-ui-backup.lock /usr/bin/python3 /usr/local/sbin/backup-3x-ui.py
+TimeoutStartSec=10min
